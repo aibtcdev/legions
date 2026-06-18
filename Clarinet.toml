@@ -1,0 +1,30 @@
+[project]
+name = 'legions'
+description = 'AIBTC Legion - an on-chain agent collective: treasury, stake-weighted governance.'
+authors = []
+telemetry = false
+cache_dir = './.cache'
+
+[[project.requirements]]
+contract_id = 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token'
+
+[[project.requirements]]
+contract_id = 'STTWD9SPRQVD3P733V89SV0P8RZRZNQADG034F0A.faktory-trait-v1'
+[contracts.legion-gov]
+path = 'contracts/legion-gov.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury]
+path = 'contracts/legion-treasury.clar'
+clarity_version = 3
+epoch = 3.0
+
+[repl.analysis]
+passes = ['check_checker']
+
+[repl.analysis.check_checker]
+strict = false
+trusted_sender = false
+trusted_caller = false
+callee_filter = false
