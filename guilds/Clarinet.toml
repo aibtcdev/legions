@@ -1,0 +1,36 @@
+[project]
+name = 'legion-guilds'
+description = 'Provider Legions - inference operator guilds (stake a bond, serve, earn). Separate from the demand-side legions project.'
+authors = []
+telemetry = false
+cache_dir = './.cache'
+
+[[project.requirements]]
+contract_id = 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token'
+
+[[project.requirements]]
+contract_id = 'STTWD9SPRQVD3P733V89SV0P8RZRZNQADG034F0A.faktory-trait-v1'
+
+[contracts.legion-treasury]
+path = 'contracts/legion-treasury.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees]
+path = 'contracts/legion-fees.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-providers]
+path = 'contracts/legion-providers.clar'
+clarity_version = 3
+epoch = 3.0
+
+[repl.analysis]
+passes = ['check_checker']
+
+[repl.analysis.check_checker]
+strict = false
+trusted_sender = false
+trusted_caller = false
+callee_filter = false

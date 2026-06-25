@@ -1,0 +1,56 @@
+---
+id: 0
+name: Testnet deployment - provider legion #1 (Qwen)
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    # Batch 0: publish the guild bundle. Deployer = legion-agent-06 (STGX5YP5...).
+    # treasury MUST publish before fees (legion-fees references .legion-treasury).
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 300000
+            path: contracts/legion-treasury.clar
+            anchor-block-only: true
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 300000
+            path: contracts/legion-fees.clar
+            anchor-block-only: true
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-providers
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 320000
+            path: contracts/legion-providers.clar
+            anchor-block-only: true
+            clarity-version: 3
+      epoch: "3.0"
+    # Batch 1: one-time wiring of the wired sBTC token into treasury + providers.
+    # (No set-gov yet: the guild treasury safely accumulates its 8% fees until
+    # guild governance is designed; deposits don't need gov, outflows do.)
+    - id: 1
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 10000
+            anchor-block-only: true
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-providers
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 10000
+            anchor-block-only: true
+      epoch: "3.0"
