@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { Cl } from "@stacks/transactions";
+import { readFileSync } from "node:fs";
 
 // The `simnet` object is injected globally by vitest-environment-clarinet.
 const accounts = simnet.getAccounts();
@@ -738,5 +739,97 @@ describe("Guard: wrong token rejected (u412)", () => {
     );
     expect(r.result).toBeErr(Cl.uint(412));
     expect(balance()).toBe(startBal);
+  });
+});
+
+// ====================================================================
+// First Light — the Legion ⇄ Inference loop, proven against the real
+// contract bytecode.
+//
+// The bridge (spark/bridge.mjs) already did the COGNITION half live: it pulled
+// a real on-chain snapshot, rented an open model through the inference
+// marketplace, and committed the signal to a sha256 content-hash (written to
+// spark/last-signal.json). Here we prove the two on-chain halves that close the
+// loop:
+//   (A) METABOLISM — paying for that cognition through legion-fees.route skims
+//       8% straight into the Legion treasury. The collective taxes its own
+//       thinking.
+//   (B) VOICE — the AI signal, carried by its real content-hash, becomes an
+//       on-chain proposal that governance passes and the treasury pays out.
+// ====================================================================
+
+// The real content-hash the model committed to in the live cognition run.
+// Falls back to a fixed value if the bridge hasn't been run in this checkout.
+function signalHash() {
+  try {
+    const j = JSON.parse(readFileSync("spark/last-signal.json", "utf8"));
+    return Cl.bufferFromHex(String(j.contentHash).replace(/^0x/, ""));
+  } catch {
+    return Cl.bufferFromHex("f9c9299af677a57762291d4746a97c8eab6d3f8a49dd410cab0fb1ba81076b1e");
+  }
+}
+
+describe("First Light: Legion <-> Inference", () => {
+  beforeEach(() => {
+    wire();
+    faucet(wallet1);
+    faucet(wallet2);
+    faucet(wallet3);
+  });
+
+  it("(A) metabolism: settling an inference bill via legion-fees.route skims 8% to the treasury", () => {
+    // The Legion agent settles an inference spend of 1,000,000 base units to the
+    // provider (wallet5) through the fee rail. FEE_BPS = 800 (8%).
+    const spend = 1_000_000;
+    const expectedFee = Math.floor((spend * 800) / 10000); // 80_000
+    const provider = wallet5;
+
+    const treasuryBefore = balance();
+    const providerBefore = sbtcOf(provider);
+
+    expect(route(wallet1, spend, provider).result).toBeOk(Cl.uint(expectedFee));
+
+    // 8% of the agent's own cognition spend flowed back into the treasury...
+    expect(balance() - treasuryBefore).toBe(BigInt(expectedFee)); // +80_000
+    // ...and the provider got the remaining 92%.
+    expect(sbtcOf(provider) - providerBefore).toBe(BigInt(spend - expectedFee)); // +920_000
+  });
+
+  it("(B) voice: the AI signal's content-hash becomes a proposal that passes and pays its author", () => {
+    // Three agents stake; wallet1 is the signal author/proposer.
+    expect(stake(wallet1, 1_000_000).result).toBeOk(Cl.bool(true));
+    expect(stake(wallet2, 1_000_000).result).toBeOk(Cl.bool(true));
+    expect(stake(wallet3, 1_000_000).result).toBeOk(Cl.bool(true));
+    expect(balance()).toBe(3_000_000n);
+
+    // Propose paying the signal's author, carrying the REAL sha256 content-hash
+    // from the live inference run + the 2 disjoint live data feeds it rests on
+    // (mempool.space fees + mempool endpoints), inscribed at the current tip.
+    expect(
+      propose(wallet1, "pay bitcoin-macro signal author", wallet4, 500_000, {
+        hash: signalHash(),
+        sources: 2,
+      }).result,
+    ).toBeOk(Cl.uint(1));
+
+    // The same signal can't be filed twice — the Rail-A PaidHash registry
+    // rejects the duplicate content-hash (u420).
+    expect(
+      propose(wallet2, "replay the same signal", wallet4, 100_000, {
+        hash: signalHash(),
+        sources: 2,
+      }).result,
+    ).toBeErr(Cl.uint(420));
+
+    enterVotingWindow();
+    expect(vote(wallet2, 1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(wallet3, 1, true).result).toBeOk(Cl.bool(true));
+
+    enterExecWindow();
+    const authorBefore = sbtcOf(wallet4);
+    expect(conclude(wallet1, 1).result).toBeOk(Cl.bool(true));
+    // Treasury paid the signal author the bounty.
+    expect(balance()).toBe(2_500_000n);
+    expect(sbtcOf(wallet4) - authorBefore).toBe(500_000n);
   });
 });
