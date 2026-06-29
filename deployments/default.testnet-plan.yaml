@@ -6,20 +6,56 @@ stacks-node: "https://api.testnet.hiro.so"
 bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
 plan:
   batches:
+    # Batch 0: publish the three contracts (Clarity 3 / epoch 3.0).
+    # Deployer = legion-agent-03 (STBEMQQ...). agent-02 already holds the
+    # legion-treasury / legion-gov names, so a fresh deployer avoids a collision.
+    # NOTE: the SIP-010 trait + sBTC token are already live on testnet and are
+    # declared as [[project.requirements]] in Clarinet.toml. The two
+    # requirement-publish steps that `clarinet deployments generate` re-adds
+    # (remapping copies of those live deps) have been DELETED on purpose - our
+    # contracts reference the REAL on-chain principals.
     - id: 0
       transactions:
         - contract-publish:
             contract-name: legion-treasury
-            expected-sender: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J
-            cost: 9146736
+            expected-sender: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5
+            cost: 264877
             path: contracts/legion-treasury.clar
             anchor-block-only: true
             clarity-version: 3
         - contract-publish:
+            contract-name: legion-fees
+            expected-sender: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5
+            cost: 264014
+            path: contracts/legion-fees.clar
+            anchor-block-only: true
+            clarity-version: 3
+        - contract-publish:
             contract-name: legion-gov
-            expected-sender: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J
-            cost: 9216684
+            expected-sender: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5
+            cost: 268843
             path: contracts/legion-gov.clar
             anchor-block-only: true
             clarity-version: 3
+      epoch: "3.0"
+    # Batch 1: one-time wiring of the treasury (deployer-only). The treasury
+    # authorizes ONLY gov; set-token wires the live Faktory sBTC token.
+    - id: 1
+      transactions:
+        - contract-call:
+            contract-id: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5.legion-treasury
+            expected-sender: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5
+            method: set-gov
+            parameters:
+              - "'STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5.legion-gov"
+            cost: 10000
+            anchor-block-only: true
+        - contract-call:
+            contract-id: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5.legion-treasury
+            expected-sender: STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 10000
+            anchor-block-only: true
       epoch: "3.0"

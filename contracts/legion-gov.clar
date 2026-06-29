@@ -11,11 +11,28 @@
 ;;   - The full burn-block proposal lifecycle (delay -> vote -> exec) is matched.
 ;;   - Quorum / threshold / veto math matches the reference exactly.
 ;;
-;; Timing uses stacks-block-height (like the reference), NOT stacks-block-height.
+;; Timing uses stacks-block-height (like the reference test-fast config), NOT
+;; burn-block-height.
 ;;
 ;; Funds are denominated in sBTC: `stake` forwards a `<sip010-trait>` token into
 ;; the treasury and `conclude-proposal` forwards the same trait reference into the
 ;; treasury's execute-transfer. The treasury validates the token principal.
+;;
+;; -------------------------------------------------------------------
+;; v3.0 / Phase-1 additions (Agent-News -> Legion payout, demand-gated design):
+;;   1. PreCheckEnforcer  - computable Rail-A gates revert at `propose()`:
+;;        freshness (inscription window), content-hash de-dup (PaidHash registry),
+;;        and a minimum disjoint-source count. Slop never reaches a vote.
+;;   2. BondLock          - each proposal earmarks a bond from the proposer's own
+;;        stake. `locked-of` sums ALL of a proposer's open bonds, so one stake can
+;;        no longer back unlimited concurrent proposals. Stake is time-locked
+;;        (StakeLockedUntil) past the exec + challenge window, so a proposer cannot
+;;        unstake-and-run mid-lifecycle.
+;;   3. ProposerExclusion - the proposer may not vote on their own proposal, and
+;;        the quorum / veto denominator is ELIGIBLE (non-proposer) stake, so a
+;;        whale proposer holding the majority cannot brick honest quorum.
+;; (Demand-gated bounty, challenge market and soulbound rep are later phases.)
+;; -------------------------------------------------------------------
 
 ;; -------------------------------------------------------------------
 ;; Traits
@@ -25,7 +42,7 @@
 ;; -------------------------------------------------------------------
 ;; Errors
 ;; -------------------------------------------------------------------
-(define-constant ERR_INELIGIBLE (err u401)) ;; zero-stake / ineligible voter
+(define-constant ERR_INELIGIBLE (err u401)) ;; zero-stake / ineligible voter or proposer
 (define-constant ERR_NO_PROPOSAL (err u404)) ;; no such proposal
 (define-constant ERR_DOUBLE_VOTE (err u405)) ;; principal already voted (same direction)
 (define-constant ERR_SELF_TARGET (err u407)) ;; recipient is gov/treasury itself
@@ -36,8 +53,17 @@
 (define-constant ERR_VETO_WINDOW (err u414)) ;; not in [voteEnd, execStart)
 (define-constant ERR_ALREADY_VETOED (err u415)) ;; principal already vetoed
 (define-constant ERR_NOT_IN_EXEC_WINDOW (err u416)) ;; conclude outside [execStart, execEnd)
-(define-constant ERR_ZERO_AMOUNT (err u417)) ;; stake/propose amount must be > 0
+(define-constant ERR_ZERO_AMOUNT (err u417)) ;; stake/propose/unstake amount must be > 0
 (define-constant ERR_EMPTY_DESC (err u418)) ;; proposal description must be non-empty
+;; -- Phase-1 Rail-A / bond / exclusion errors --
+(define-constant ERR_STALE (err u419)) ;; inscription older than the freshness window
+(define-constant ERR_DUP_HASH (err u420)) ;; content hash already claimed/paid
+(define-constant ERR_THIN_SOURCING (err u421)) ;; fewer than MIN_SOURCES sources
+(define-constant ERR_INSUFFICIENT_BOND (err u422)) ;; free stake cannot cover the proposal bond
+(define-constant ERR_SELF_VOTE (err u423)) ;; proposer voting on own proposal
+(define-constant ERR_STAKE_LOCKED (err u424)) ;; unstake before StakeLockedUntil
+(define-constant ERR_INSUFFICIENT_UNSTAKE (err u425)) ;; unstake more than free (unlocked) stake
+(define-constant ERR_FUTURE_INSCRIPTION (err u426)) ;; inscription height is in the future
 
 ;; -------------------------------------------------------------------
 ;; Config (matches the reference parameter values)
@@ -45,17 +71,30 @@
 (define-constant TREASURY .legion-treasury)
 (define-constant SELF (as-contract tx-sender))
 
-(define-constant VOTING_QUORUM u15) ;; 15% turnout (of total staked) required
+(define-constant VOTING_QUORUM u15) ;; 15% turnout (of ELIGIBLE staked) required
 (define-constant VOTING_THRESHOLD u66) ;; 66% of cast votes must be yes
-;; TEST TIMING: short windows + Stacks-block (not burn-block) counting so a full
-;; lifecycle runs in ~10-15 min on testnet. For production, revert to
-;; burn-block-height with VOTING_DELAY u12 / VOTING_PERIOD u24 (AIBTC-matched).
-(define-constant VOTING_DELAY u1) ;; stacks blocks between creation and vote start
-(define-constant VOTING_PERIOD u15) ;; stacks-block voting window length
+;; TEST TIMING: short windows + Stacks-block (not burn-block) counting. Tuned so
+;; a full lifecycle (DELAY + PERIOD + DELAY + PERIOD = 96 stacks blocks) runs in
+;; ~1 hour on testnet (~3x the prior 32-block / ~20-min cadence). For production,
+;; revert to burn-block-height with VOTING_DELAY u12 / VOTING_PERIOD u24 (AIBTC-matched).
+(define-constant VOTING_DELAY u3) ;; stacks blocks between creation and vote start
+(define-constant VOTING_PERIOD u45) ;; stacks-block voting window length
 
 ;; Our extra guard on top of the AIBTC model: require at least this many distinct
 ;; voters before a proposal can execute.
 (define-constant MIN_PARTICIPANTS u2)
+
+;; -- Phase-1 Rail-A / bond config --
+;; Rail A: a story's inscription must be no older than this many stacks blocks at
+;; propose() time (combined A1/A2 freshness + A3 propose-window). ~144 blocks ~= 1 day.
+(define-constant FRESH_WINDOW u144)
+;; Rail A: minimum disjoint-domain source count (count-only gate; C1).
+(define-constant MIN_SOURCES u2)
+;; Bond earmarked from the proposer's stake, in basis points of the requested amount.
+(define-constant BOND_BPS u2000) ;; 20%
+;; Stake stays locked this many blocks past execEnd (placeholder for the Phase-2
+;; Rail-B challenge window). Prevents unstake-and-run before a proposal settles.
+(define-constant CHALLENGE_PERIOD u15)
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -66,8 +105,36 @@
   uint
 )
 
-;; Running total of all staked STX. Used as the quorum/veto denominator snapshot.
+;; Running total of all staked sBTC. Used as the basis for the per-proposal
+;; eligible-stake snapshot (denominator) and decremented on unstake.
 (define-data-var TotalStaked uint u0)
+
+;; BondLock: running sum of a principal's OPEN (unreleased) proposal bonds.
+;; `locked-of` reads this in O(1). It is the "sum all open bonds" the design
+;; requires so one stake cannot back unlimited concurrent proposals.
+(define-map LockedStake principal uint)
+
+;; BondLock: earliest stacks-block at which a principal may unstake. Set on
+;; propose to execEnd + CHALLENGE_PERIOD (kept monotonic across proposals).
+(define-map StakeLockedUntil principal uint)
+
+;; Per-proposal bond record (earmarked from the proposer's stake).
+(define-map ProposalBond
+  uint
+  {
+    proposer: principal,
+    locked: uint,
+    released: bool,
+  }
+)
+
+;; PreCheckEnforcer: on-chain registry of claimed content hashes. A hash is
+;; claimed at propose() and kept permanently if the proposal pays out; it is
+;; freed again if the proposal concludes as FAILED (so the story can be re-filed).
+(define-map PaidHash
+  (buff 32)
+  uint
+)
 
 (define-data-var ProposalNonce uint u0)
 
@@ -84,12 +151,20 @@
     ;; The reference snapshots each VOTER's token balance at the proposal's
     ;; creation Stacks block via `at-block`, and uses liquid token supply as the
     ;; quorum denominator. We instead snapshot the TOTAL staked amount into the
-    ;; proposal at creation time (`totalStakedSnapshot`) as the quorum/veto
-    ;; denominator, and read per-voter weight as CURRENT stake at vote time.
-    ;; This is safe here because staked STX is locked inside legion-treasury and
-    ;; cannot be withdrawn, so mid-proposal vote-buying is not a cheap attack and
-    ;; per-voter weight cannot be inflated then unwound.
+    ;; proposal at creation time (`totalStakedSnapshot`) and derive the quorum /
+    ;; veto denominator as ELIGIBLE stake = snapshot - proposer's own stake
+    ;; (`eligibleSnapshot`). Per-voter weight is read as CURRENT stake at vote
+    ;; time. This is safe because staked sBTC is locked inside legion-treasury and
+    ;; cannot be withdrawn while a proposal is live (StakeLockedUntil), so
+    ;; mid-proposal vote-buying is not a cheap attack.
     totalStakedSnapshot: uint,
+    proposerStake: uint,
+    eligibleSnapshot: uint,
+    bond: uint,
+    ;; Rail-A precheck inputs, recorded for auditability.
+    contentHash: (buff 32),
+    inscriptionHeight: uint,
+    sources: uint,
     yesWeight: uint,
     noWeight: uint,
     vetoWeight: uint,
@@ -132,6 +207,29 @@
   (var-get TotalStaked)
 )
 
+;; BondLock: total of `who`'s open (unreleased) proposal bonds.
+(define-read-only (locked-of (who principal))
+  (default-to u0 (map-get? LockedStake who))
+)
+
+;; BondLock: earliest block `who` may unstake (u0 = never proposed / unlocked).
+(define-read-only (get-locked-until (who principal))
+  (default-to u0 (map-get? StakeLockedUntil who))
+)
+
+;; Free (unlocked, unbonded) stake `who` could unstake right now, ignoring time.
+(define-read-only (get-free-stake (who principal))
+  (- (get-stake who) (locked-of who))
+)
+
+(define-read-only (get-bond (id uint))
+  (map-get? ProposalBond id)
+)
+
+(define-read-only (is-hash-claimed (h (buff 32)))
+  (is-some (map-get? PaidHash h))
+)
+
 (define-read-only (get-proposal (id uint))
   (map-get? Proposals id)
 )
@@ -161,7 +259,8 @@
 )
 
 ;; Mirrors the reference getter: returns computed lifecycle windows plus the
-;; current met-quorum / met-threshold / veto evaluation for a proposal.
+;; current met-quorum / met-threshold / veto evaluation for a proposal. Quorum is
+;; measured against ELIGIBLE (non-proposer) stake.
 (define-read-only (get-proposal-status (id uint))
   (match (map-get? Proposals id)
     prop (let (
@@ -173,22 +272,22 @@
         (yesWeight (get yesWeight prop))
         (noWeight (get noWeight prop))
         (vetoWeight (get vetoWeight prop))
-        (snapshot (get totalStakedSnapshot prop))
+        (eligible (get eligibleSnapshot prop))
         (castTotal (+ yesWeight noWeight))
         (hasVotes (> castTotal u0))
         (metQuorum (and
-          (> snapshot u0)
+          (> eligible u0)
           hasVotes
-          (>= (/ (* castTotal u100) snapshot) VOTING_QUORUM)
+          (>= (/ (* castTotal u100) eligible) VOTING_QUORUM)
         ))
         (metThreshold (and
           hasVotes
           (>= (/ (* yesWeight u100) castTotal) VOTING_THRESHOLD)
         ))
         (vetoMetQuorum (and
-          (> snapshot u0)
+          (> eligible u0)
           (> vetoWeight u0)
-          (>= (/ (* vetoWeight u100) snapshot) VOTING_QUORUM)
+          (>= (/ (* vetoWeight u100) eligible) VOTING_QUORUM)
         ))
         (vetoActivated (and vetoMetQuorum (> vetoWeight yesWeight)))
       )
@@ -201,7 +300,9 @@
         yesWeight: yesWeight,
         noWeight: noWeight,
         vetoWeight: vetoWeight,
-        totalStakedSnapshot: snapshot,
+        totalStakedSnapshot: (get totalStakedSnapshot prop),
+        eligibleSnapshot: eligible,
+        bond: (get bond prop),
         voterCount: (get voterCount prop),
         metQuorum: metQuorum,
         metThreshold: metThreshold,
@@ -245,18 +346,64 @@
 )
 
 ;; -------------------------------------------------------------------
+;; Public: unstake
+;; -------------------------------------------------------------------
+;; Returns `amount` sBTC from the treasury to the caller. Only FREE stake (stake
+;; minus open bonds) is withdrawable, and only after StakeLockedUntil. gov is the
+;; authorized mover, so it routes the payout through treasury.execute-transfer.
+(define-public (unstake
+    (ft <sip010-trait>)
+    (amount uint)
+  )
+  (let (
+      (staker tx-sender)
+      (bal (get-stake tx-sender))
+      (locked (locked-of tx-sender))
+      (until (get-locked-until tx-sender))
+    )
+    (asserts! (> amount u0) ERR_ZERO_AMOUNT)
+    (asserts! (>= stacks-block-height until) ERR_STAKE_LOCKED)
+    ;; cannot withdraw stake that is earmarked as an open proposal bond
+    (asserts! (<= amount (- bal locked)) ERR_INSUFFICIENT_UNSTAKE)
+    ;; EFFECTS BEFORE INTERACTION
+    (map-set Stakes staker (- bal amount))
+    (var-set TotalStaked (- (var-get TotalStaked) amount))
+    (try! (contract-call? .legion-treasury execute-transfer ft staker amount))
+    (print {
+      event: "unstake",
+      staker: staker,
+      amount: amount,
+      remaining: (- bal amount),
+      totalStaked: (var-get TotalStaked),
+    })
+    (ok true)
+  )
+)
+
+;; -------------------------------------------------------------------
 ;; Public: propose
 ;; -------------------------------------------------------------------
-;; Snapshots the total staked weight and anchors the burn-block lifecycle.
+;; Snapshots the eligible staked weight, anchors the burn-block lifecycle, runs
+;; the Rail-A precheck (freshness / hash de-dup / sourcing), and earmarks a bond
+;; from the proposer's own stake.
 (define-public (propose
     (desc (string-ascii 256))
     (recipient principal)
     (amount uint)
+    (content-hash (buff 32))
+    (inscription-height uint)
+    (sources uint)
   )
   (let (
       (id (+ (var-get ProposalNonce) u1))
       (snapshot (var-get TotalStaked))
+      (proposer-stake (get-stake tx-sender))
+      (already-locked (locked-of tx-sender))
       (createdBtc stacks-block-height)
+      (bond (/ (* amount BOND_BPS) u10000))
+      (execEnd (+ createdBtc (+ (* u2 VOTING_DELAY) (* u2 VOTING_PERIOD))))
+      (lock-until (+ execEnd CHALLENGE_PERIOD))
+      (cur-lock (get-locked-until tx-sender))
     )
     ;; No self-targeting: cannot route funds to gov or treasury contracts.
     (asserts! (and (not (is-eq recipient SELF)) (not (is-eq recipient TREASURY)))
@@ -268,6 +415,31 @@
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
     ;; Reject blank descriptions; this also sanitizes `desc` before it is stored.
     (asserts! (> (len desc) u0) ERR_EMPTY_DESC)
+    ;; BondLock: only a staker may propose, and free stake must cover the bond.
+    (asserts! (> proposer-stake u0) ERR_INELIGIBLE)
+    (asserts! (>= proposer-stake (+ already-locked bond)) ERR_INSUFFICIENT_BOND)
+    ;; -- Rail-A PreCheckEnforcer (computable gates revert here) --
+    ;; A2: the inscription cannot be in the future.
+    (asserts! (<= inscription-height createdBtc) ERR_FUTURE_INSCRIPTION)
+    ;; A1/A3: the inscription must be fresh (within the propose window).
+    (asserts! (<= (- createdBtc inscription-height) FRESH_WINDOW) ERR_STALE)
+    ;; B1: the content hash must not already be claimed/paid.
+    (asserts! (is-none (map-get? PaidHash content-hash)) ERR_DUP_HASH)
+    ;; C1: minimum disjoint-source count (count-only).
+    (asserts! (>= sources MIN_SOURCES) ERR_THIN_SOURCING)
+    ;; Claim the hash (freed again iff this proposal later fails).
+    (map-set PaidHash content-hash id)
+    ;; BondLock: earmark the bond and time-lock the proposer's stake.
+    (map-set LockedStake tx-sender (+ already-locked bond))
+    (map-set ProposalBond id {
+      proposer: tx-sender,
+      locked: bond,
+      released: false,
+    })
+    (map-set StakeLockedUntil tx-sender (if (> lock-until cur-lock)
+      lock-until
+      cur-lock
+    ))
     (map-set Proposals id {
       proposer: tx-sender,
       desc: desc,
@@ -275,6 +447,12 @@
       amount: amount,
       createdBtc: createdBtc,
       totalStakedSnapshot: snapshot,
+      proposerStake: proposer-stake,
+      eligibleSnapshot: (- snapshot proposer-stake),
+      bond: bond,
+      contentHash: content-hash,
+      inscriptionHeight: inscription-height,
+      sources: sources,
       yesWeight: u0,
       noWeight: u0,
       vetoWeight: u0,
@@ -289,10 +467,15 @@
       proposer: tx-sender,
       recipient: recipient,
       amount: amount,
+      bond: bond,
+      contentHash: content-hash,
+      inscriptionHeight: inscription-height,
+      sources: sources,
       createdBtc: createdBtc,
       voteStart: (+ createdBtc VOTING_DELAY),
       voteEnd: (+ (+ createdBtc VOTING_DELAY) VOTING_PERIOD),
       totalStakedSnapshot: snapshot,
+      eligibleSnapshot: (- snapshot proposer-stake),
     })
     (ok id)
   )
@@ -301,8 +484,9 @@
 ;; -------------------------------------------------------------------
 ;; Public: vote
 ;; -------------------------------------------------------------------
-;; Allowed only in [voteStart, voteEnd). A voter may change their vote within
-;; the window: the previous weighted vote is subtracted and the new one added.
+;; Allowed only in [voteStart, voteEnd). The proposer may NOT vote on their own
+;; proposal. A voter may change their vote within the window: the previous
+;; weighted vote is subtracted and the new one added.
 (define-public (vote
     (proposal-id uint)
     (support bool)
@@ -318,6 +502,8 @@
         voter: tx-sender,
       }))
     )
+    ;; ProposerExclusion: the proposer cannot vote on their own proposal.
+    (asserts! (not (is-eq tx-sender (get proposer prop))) ERR_SELF_VOTE)
     ;; voter must hold non-zero stake
     (asserts! (> weight u0) ERR_INELIGIBLE)
     ;; proposal not concluded
@@ -434,19 +620,19 @@
 ;; -------------------------------------------------------------------
 ;; Public: conclude-proposal
 ;; -------------------------------------------------------------------
-;; Replaces the old `tally-and-execute`. Callable only in [execStart, execEnd)
-;; and only once. Marks the proposal concluded BEFORE any external call
-;; (effects-before-interaction). Executes the treasury transfer ONLY IF the
-;; proposal met quorum AND threshold AND has >= MIN_PARTICIPANTS voters AND was
-;; not veto-activated. Otherwise it concludes as a FAILED proposal (no transfer)
-;; but the tx still succeeds, matching the reference's "always concludable after
-;; the window" behavior.
+;; Callable only in [execStart, execEnd) and only once. Marks the proposal
+;; concluded BEFORE any external call (effects-before-interaction). Releases the
+;; proposer's bond, and frees the content hash iff the proposal FAILED (so the
+;; story can be re-filed; a paid hash stays claimed forever). Executes the
+;; treasury transfer ONLY IF the proposal met (eligible) quorum AND threshold AND
+;; has >= MIN_PARTICIPANTS voters AND was not veto-activated.
 (define-public (conclude-proposal
     (proposal-id uint)
     (ft <sip010-trait>)
   )
   (let (
       (prop (unwrap! (map-get? Proposals proposal-id) ERR_NO_PROPOSAL))
+      (bondInfo (unwrap! (map-get? ProposalBond proposal-id) ERR_NO_PROPOSAL))
       (createdBtc (get createdBtc prop))
       (voteEnd (+ (+ createdBtc VOTING_DELAY) VOTING_PERIOD))
       (execStart (+ voteEnd VOTING_DELAY))
@@ -454,14 +640,14 @@
       (yesWeight (get yesWeight prop))
       (noWeight (get noWeight prop))
       (vetoWeight (get vetoWeight prop))
-      (snapshot (get totalStakedSnapshot prop))
+      (eligible (get eligibleSnapshot prop))
       (castTotal (+ yesWeight noWeight))
       (hasVotes (> castTotal u0))
-      ;; quorum: total cast vs snapshot. Guard against zero snapshot / no votes.
+      ;; quorum: total cast vs ELIGIBLE snapshot. Guard against zero / no votes.
       (metQuorum (and
-        (> snapshot u0)
+        (> eligible u0)
         hasVotes
-        (>= (/ (* castTotal u100) snapshot) VOTING_QUORUM)
+        (>= (/ (* castTotal u100) eligible) VOTING_QUORUM)
       ))
       ;; threshold: yes vs cast. Guard against div-by-zero (castTotal > 0).
       (metThreshold (and
@@ -469,9 +655,9 @@
         (>= (/ (* yesWeight u100) castTotal) VOTING_THRESHOLD)
       ))
       (vetoMetQuorum (and
-        (> snapshot u0)
+        (> eligible u0)
         (> vetoWeight u0)
-        (>= (/ (* vetoWeight u100) snapshot) VOTING_QUORUM)
+        (>= (/ (* vetoWeight u100) eligible) VOTING_QUORUM)
       ))
       (vetoActivated (and vetoMetQuorum (> vetoWeight yesWeight)))
       (enoughParticipants (>= (get voterCount prop) MIN_PARTICIPANTS))
@@ -481,14 +667,24 @@
         enoughParticipants
         (not vetoActivated)
       ))
+      (proposer (get proposer prop))
+      (bondAmt (get locked bondInfo))
     )
     ;; not already concluded
     (asserts! (not (get concluded prop)) ERR_ALREADY_CONCLUDED)
     ;; execution window: [execStart, execEnd)
     (asserts! (>= stacks-block-height execStart) ERR_NOT_IN_EXEC_WINDOW)
     (asserts! (< stacks-block-height execEnd) ERR_NOT_IN_EXEC_WINDOW)
-    ;; EFFECTS BEFORE INTERACTION: mark concluded (and executed iff passing)
-    ;; before the external treasury call.
+    ;; EFFECTS BEFORE INTERACTION:
+    ;; release the proposer's bond back into free stake.
+    (map-set ProposalBond proposal-id (merge bondInfo { released: true }))
+    (map-set LockedStake proposer (- (locked-of proposer) bondAmt))
+    ;; free the content hash iff the proposal failed (paid hashes stay claimed).
+    (if votePassed
+      true
+      (map-delete PaidHash (get contentHash prop))
+    )
+    ;; mark concluded (and executed iff passing) before the external call.
     (map-set Proposals proposal-id
       (merge prop {
         concluded: true,
@@ -503,10 +699,12 @@
       yesWeight: yesWeight,
       noWeight: noWeight,
       vetoWeight: vetoWeight,
+      eligibleSnapshot: eligible,
       metQuorum: metQuorum,
       metThreshold: metThreshold,
       vetoActivated: vetoActivated,
       enoughParticipants: enoughParticipants,
+      bondReleased: bondAmt,
       passed: votePassed,
     })
     (if votePassed

@@ -20,6 +20,11 @@ path = 'contracts/legion-treasury.clar'
 clarity_version = 3
 epoch = 3.0
 
+[contracts.legion-fees]
+path = 'contracts/legion-fees.clar'
+clarity_version = 3
+epoch = 3.0
+
 [repl.analysis]
 passes = ['check_checker']
 

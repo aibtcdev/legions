@@ -75,6 +75,11 @@ plan:
             path: contracts/legion-treasury.clar
             clarity-version: 3
         - emulated-contract-publish:
+            contract-name: legion-fees
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: contracts/legion-fees.clar
+            clarity-version: 3
+        - emulated-contract-publish:
             contract-name: legion-gov
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
             path: contracts/legion-gov.clar
