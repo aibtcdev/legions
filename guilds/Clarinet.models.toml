@@ -1,0 +1,115 @@
+[project]
+name = 'legion-models-check'
+telemetry = false
+cache_dir = './.cache'
+
+[[project.requirements]]
+contract_id = 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token'
+
+[[project.requirements]]
+contract_id = 'STTWD9SPRQVD3P733V89SV0P8RZRZNQADG034F0A.faktory-trait-v1'
+
+[contracts.legion-treasury-qwen]
+path = 'contracts/models/legion-treasury-qwen.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-qwen]
+path = 'contracts/models/legion-fees-qwen.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-qwen]
+path = 'contracts/models/legion-gov-qwen.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury-deepseek]
+path = 'contracts/models/legion-treasury-deepseek.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-deepseek]
+path = 'contracts/models/legion-fees-deepseek.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-deepseek]
+path = 'contracts/models/legion-gov-deepseek.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury-glm5]
+path = 'contracts/models/legion-treasury-glm5.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-glm5]
+path = 'contracts/models/legion-fees-glm5.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-glm5]
+path = 'contracts/models/legion-gov-glm5.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury-kimi]
+path = 'contracts/models/legion-treasury-kimi.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-kimi]
+path = 'contracts/models/legion-fees-kimi.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-kimi]
+path = 'contracts/models/legion-gov-kimi.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury-llama4]
+path = 'contracts/models/legion-treasury-llama4.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-llama4]
+path = 'contracts/models/legion-fees-llama4.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-llama4]
+path = 'contracts/models/legion-gov-llama4.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury-mistral]
+path = 'contracts/models/legion-treasury-mistral.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-mistral]
+path = 'contracts/models/legion-fees-mistral.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-mistral]
+path = 'contracts/models/legion-gov-mistral.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-treasury-gemma4]
+path = 'contracts/models/legion-treasury-gemma4.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-fees-gemma4]
+path = 'contracts/models/legion-fees-gemma4.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.legion-gov-gemma4]
+path = 'contracts/models/legion-gov-gemma4.clar'
+clarity_version = 3
+epoch = 3.0

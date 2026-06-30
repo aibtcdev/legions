@@ -1,0 +1,127 @@
+---
+id: 0
+name: Testnet - register per-model legions in legion-registry
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    # register qwen
+    - id: 0
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-qwen"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-qwen)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-qwen)"
+              - '"qwen2.5-7b"'
+              - '"Qwen provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"
+    # register deepseek
+    - id: 1
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-deepseek"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-deepseek)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-deepseek)"
+              - '"deepseek-r1-32b"'
+              - '"DeepSeek provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"
+    # register glm5
+    - id: 2
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-glm5"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-glm5)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-glm5)"
+              - '"glm-5"'
+              - '"GLM-5 provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"
+    # register kimi
+    - id: 3
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-kimi"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-kimi)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-kimi)"
+              - '"kimi-k2"'
+              - '"Kimi provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"
+    # register llama4
+    - id: 4
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-llama4"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-llama4)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-llama4)"
+              - '"llama-3.3-70b"'
+              - '"Llama 4 provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"
+    # register mistral
+    - id: 5
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-mistral"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-mistral)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-mistral)"
+              - '"mistral-nemo"'
+              - '"Mistral provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"
+    # register gemma4
+    - id: 6
+      transactions:
+        - contract-call:
+            contract-id: STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J.legion-registry
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: register
+            parameters:
+              - '"provider"'
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-gemma4"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-gemma4)"
+              - "(some 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-fees-gemma4)"
+              - '"gemma-4"'
+              - '"Gemma 4 provider legion (governed)"'
+            cost: 50000
+            anchor-block-only: false
+      epoch: "3.0"

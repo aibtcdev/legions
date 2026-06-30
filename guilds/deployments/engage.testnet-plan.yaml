@@ -1,0 +1,24 @@
+---
+id: 0
+name: Testnet deployment - legion-engage (engagement stake)
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    # Publish ONLY legion-engage under the guild deployer (STGX5YP, legion-agent-06).
+    # treasury / fees / providers are ALREADY on-chain from default.testnet-plan.yaml
+    # (do NOT re-run that plan). legion-engage references .legion-treasury, which
+    # resolves because it publishes under the same sender (STGX5YP). No wiring step:
+    # the sBTC token is a compile-time constant in legion-engage, and the treasury's
+    # token was already wired.
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: legion-engage
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 320000
+            path: contracts/legion-engage.clar
+            anchor-block-only: true
+            clarity-version: 3
+      epoch: "3.0"
