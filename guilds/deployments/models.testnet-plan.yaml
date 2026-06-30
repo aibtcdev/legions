@@ -1,0 +1,323 @@
+---
+id: 0
+name: Testnet deployment - per-model legions (treasury+fees+gov), one wallet
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    # qwen: publish bundle (treasury -> fees -> gov)
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-qwen
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-qwen.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-qwen
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-qwen.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-qwen
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-qwen.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # qwen: wire token + gov into the treasury
+    - id: 1
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-qwen
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-qwen
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-qwen"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
+    # deepseek: publish bundle (treasury -> fees -> gov)
+    - id: 2
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-deepseek
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-deepseek.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-deepseek
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-deepseek.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-deepseek
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-deepseek.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # deepseek: wire token + gov into the treasury
+    - id: 3
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-deepseek
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-deepseek
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-deepseek"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
+    # glm5: publish bundle (treasury -> fees -> gov)
+    - id: 4
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-glm5
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-glm5.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-glm5
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-glm5.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-glm5
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-glm5.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # glm5: wire token + gov into the treasury
+    - id: 5
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-glm5
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-glm5
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-glm5"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
+    # kimi: publish bundle (treasury -> fees -> gov)
+    - id: 6
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-kimi
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-kimi.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-kimi
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-kimi.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-kimi
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-kimi.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # kimi: wire token + gov into the treasury
+    - id: 7
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-kimi
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-kimi
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-kimi"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
+    # llama4: publish bundle (treasury -> fees -> gov)
+    - id: 8
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-llama4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-llama4.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-llama4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-llama4.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-llama4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-llama4.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # llama4: wire token + gov into the treasury
+    - id: 9
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-llama4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-llama4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-llama4"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
+    # mistral: publish bundle (treasury -> fees -> gov)
+    - id: 10
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-mistral
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-mistral.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-mistral
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-mistral.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-mistral
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-mistral.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # mistral: wire token + gov into the treasury
+    - id: 11
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-mistral
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-mistral
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-mistral"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
+    # gemma4: publish bundle (treasury -> fees -> gov)
+    - id: 12
+      transactions:
+        - contract-publish:
+            contract-name: legion-treasury-gemma4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/models/legion-treasury-gemma4.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-fees-gemma4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 350000
+            path: contracts/models/legion-fees-gemma4.clar
+            anchor-block-only: false
+            clarity-version: 3
+        - contract-publish:
+            contract-name: legion-gov-gemma4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 1200000
+            path: contracts/models/legion-gov-gemma4.clar
+            anchor-block-only: false
+            clarity-version: 3
+      epoch: "3.0"
+    # gemma4: wire token + gov into the treasury
+    - id: 13
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-gemma4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-token
+            parameters:
+              - "'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token"
+            cost: 20000
+            anchor-block-only: false
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-treasury-gemma4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.legion-gov-gemma4"
+            cost: 20000
+            anchor-block-only: false
+      epoch: "3.0"
