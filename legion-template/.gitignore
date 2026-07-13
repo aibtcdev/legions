@@ -1,0 +1,9 @@
+# generated legions (each agent's own projects)
+legions/
+# secrets — your real seed phrases live here
+settings/Testnet.toml
+settings/Mainnet.toml
+# clarinet caches
+.cache/
+**/.cache/
+history.txt
