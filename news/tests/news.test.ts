@@ -7,8 +7,8 @@ const deployer = accounts.get("deployer")!;
 const proposer = accounts.get("wallet_1")!;
 const voter1 = accounts.get("wallet_2")!;
 const voter2 = accounts.get("wallet_3")!;
-const corrA = accounts.get("wallet_4")!; // correspondent A -- 7 signals
-const corrB = accounts.get("wallet_5")!; // correspondent B -- 5 signals
+const corrA = accounts.get("wallet_4")!; // correspondent A -- 49 signals this week
+const corrB = accounts.get("wallet_5")!; // correspondent B -- 35 signals this week
 const outsider = accounts.get("wallet_6")!;
 
 const TREASURY = "news-treasury";
@@ -20,22 +20,31 @@ const govPrincipal = `${deployer}.${GOV}`;
 const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
 
 // Must match news-gov.clar.
-const VOTE_WINDOW = 144;
+const VOTE_WINDOW = 1008; // ~7 days in burn blocks
 const MIN_STAKE = 10_000;
 
-const DATE = "2026-07-21";
-const INSCRIPTION = Uint8Array.from([0x33, 0xed, 0xd6, 0x3e]);
+// The week's first brief date. Keyed per week, not per day.
+const WEEK = "2026-07-20";
+const INSCRIPTIONS = [
+  Uint8Array.from([0x33, 0xed, 0xd6, 0x3e]),
+  Uint8Array.from([0x44, 0xfe, 0xe7, 0x4f]),
+];
 
-// Pool + stake sizes chosen so the arithmetic matches the spec worked example:
-//   draw          = 1%  of 100_000_000 = 1_000_000
-//   proposer fee  = 1%  of 1_000_000   =    10_000
-//   distributable =                       990_000
-//   per entry     = 990_000 / 12       =    82_500
+// Arithmetic the worked example in the README depends on:
+//   draw          = 0.5% of 100,000,000 = 500,000
+//   proposer fee  = 1%   of 500,000     =   5,000
+//   distributable =                       495,000
+//   per signal    = 495,000 / 84        =   5,892  (remainder 72 stays in Pool)
 const POOL = 100_000_000;
 const STAKE = 10_000_000;
-const DRAW = 1_000_000;
-const FEE = 10_000;
-const PER_ENTRY = 82_500;
+const DRAW = 500_000;
+const FEE = 5_000;
+const BOND = 50_000; // 10% of the draw
+const SIGNALS_A = 49;
+const SIGNALS_B = 35;
+const PER_SIGNAL = 5_892;
+const PAY_A = SIGNALS_A * PER_SIGNAL; // 288,708
+const PAY_B = SIGNALS_B * PER_SIGNAL; // 206,220
 
 // ---- helpers -------------------------------------------------------
 
@@ -63,20 +72,27 @@ function stakeOf(who: string): bigint {
   return (r.result as any).value as bigint;
 }
 
-/** 16-byte signal id, ascending with `n` so lists are trivially sortable. */
-function signalId(n: number): Uint8Array {
-  const b = new Uint8Array(16);
-  b[0] = n;
-  return b;
+function lockedOf(who: string): bigint {
+  const r = simnet.callReadOnlyFn(GOV, "locked-of", [Cl.principal(who)], deployer);
+  return (r.result as any).value as bigint;
 }
 
-/** The 12-entry brief from the spec: A filed 7, B filed 5. */
-function entries(recipients: string[] = [...Array(7).fill(corrA), ...Array(5).fill(corrB)]) {
+/** One entry per correspondent: how many of their signals landed this week. */
+function entries(
+  rows: Array<[string, number]> = [
+    [corrA, SIGNALS_A],
+    [corrB, SIGNALS_B],
+  ],
+) {
   return Cl.list(
-    recipients.map((r, i) =>
-      Cl.tuple({ signalId: Cl.buffer(signalId(i + 1)), recipient: Cl.principal(r) }),
+    rows.map(([recipient, signals]) =>
+      Cl.tuple({ recipient: Cl.principal(recipient), signals: Cl.uint(signals) }),
     ),
   );
+}
+
+function inscriptions(list = INSCRIPTIONS) {
+  return Cl.list(list.map((i) => Cl.buffer(i)));
 }
 
 function wire() {
@@ -97,26 +113,25 @@ function stake(who: string, amount = STAKE) {
   expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(amount)], who).result).toBeOk(Cl.uint(amount));
 }
 
-function propose(who = proposer, date = DATE, list = entries()) {
-  return simnet.callPublicFn(
-    GOV,
-    "propose-brief",
-    [Cl.stringAscii(date), Cl.buffer(INSCRIPTION), list],
-    who,
-  );
+function propose(who = proposer, week = WEEK, list = entries(), ins = inscriptions()) {
+  return simnet.callPublicFn(GOV, "propose-brief", [Cl.stringAscii(week), ins, list], who);
 }
 
-function vote(who: string, support: boolean, date = DATE) {
-  return simnet.callPublicFn(GOV, "vote", [Cl.stringAscii(date), Cl.bool(support)], who);
+function vote(who: string, support: boolean, week = WEEK) {
+  return simnet.callPublicFn(GOV, "vote", [Cl.stringAscii(week), Cl.bool(support)], who);
 }
 
-function settle(date = DATE, who = outsider) {
-  return simnet.callPublicFn(GOV, "settle", [Cl.stringAscii(date)], who);
+function settle(week = WEEK, who = outsider) {
+  return simnet.callPublicFn(GOV, "settle", [Cl.stringAscii(week)], who);
 }
 
-function briefStatus(date = DATE): bigint {
-  const r = simnet.callReadOnlyFn(GOV, "get-brief-status", [Cl.stringAscii(date)], deployer);
+function briefStatus(week = WEEK): bigint {
+  const r = simnet.callReadOnlyFn(GOV, "get-brief-status", [Cl.stringAscii(week)], deployer);
   return (r.result as any).value.value as bigint;
+}
+
+function closeWindow() {
+  simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
 }
 
 // ---- tests ---------------------------------------------------------
@@ -161,6 +176,18 @@ describe("wiring and funding", () => {
     );
     expect(r.result).toBeErr(Cl.uint(401));
   });
+
+  it("refuses an unstake from anyone but gov", () => {
+    wire();
+    fundPool();
+    const r = simnet.callPublicFn(
+      TREASURY,
+      "execute-unstake",
+      [Cl.principal(outsider), Cl.uint(1000)],
+      outsider,
+    );
+    expect(r.result).toBeErr(Cl.uint(401));
+  });
 });
 
 describe("staking", () => {
@@ -186,14 +213,22 @@ describe("staking", () => {
     expect(stakedOf()).toBe(0n);
   });
 
-  it("blocks unstaking while a brief the member voted on is open", () => {
+  it("blocks unstaking while a week the member voted on is open", () => {
     stake(proposer);
     stake(voter1);
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(simnet.callPublicFn(GOV, "unstake", [Cl.uint(STAKE)], voter1).result).toBeErr(
       Cl.uint(415),
     );
+  });
+
+  it("keeps a proposer's bond unwithdrawable while the vote is live", () => {
+    stake(proposer);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    closeWindow(); // lock expires, but the bond is still earmarked
+    const free = simnet.callReadOnlyFn(GOV, "get-free-stake", [Cl.principal(proposer)], deployer);
+    expect((free.result as any).value).toBe(BigInt(STAKE - BOND));
   });
 });
 
@@ -205,40 +240,53 @@ describe("propose-brief", () => {
   });
 
   it("locks a bond of 10% of the pending draw", () => {
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
-    const locked = simnet.callReadOnlyFn(GOV, "locked-of", [Cl.principal(proposer)], deployer);
-    expect((locked.result as any).value).toBe(BigInt(DRAW / 10));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(lockedOf(proposer)).toBe(BigInt(BOND));
   });
 
-  it("rejects entries that are not sorted by signal id", () => {
-    const unsorted = Cl.list([
-      Cl.tuple({ signalId: Cl.buffer(signalId(2)), recipient: Cl.principal(corrA) }),
-      Cl.tuple({ signalId: Cl.buffer(signalId(1)), recipient: Cl.principal(corrB) }),
+  it("rejects a duplicate correspondent", () => {
+    // Two entries for the same principal would collide on payout-ref and revert
+    // the whole settlement, so they are refused at propose time.
+    const dupes = entries([
+      [corrA, 10],
+      [corrA, 5],
     ]);
-    expect(propose(proposer, DATE, unsorted).result).toBeErr(Cl.uint(412));
+    expect(propose(proposer, WEEK, dupes).result).toBeErr(Cl.uint(412));
   });
 
-  it("rejects a malformed brief date", () => {
+  it("rejects a zero signal count", () => {
+    expect(propose(proposer, WEEK, entries([[corrA, 0]])).result).toBeErr(Cl.uint(412));
+  });
+
+  it("rejects a malformed week date", () => {
     expect(propose(proposer, "2026-7-1").result).toBeErr(Cl.uint(420));
   });
 
+  it("rejects a correctly-sized date with separators in the wrong place", () => {
+    expect(propose(proposer, "20-07-2026").result).toBeErr(Cl.uint(420));
+  });
+
   it("rejects an empty entry list", () => {
-    expect(propose(proposer, DATE, Cl.list([])).result).toBeErr(Cl.uint(411));
+    expect(propose(proposer, WEEK, Cl.list([])).result).toBeErr(Cl.uint(411));
+  });
+
+  it("rejects an empty inscription list", () => {
+    expect(propose(proposer, WEEK, entries(), Cl.list([])).result).toBeErr(Cl.uint(421));
   });
 
   it("refuses a non-member", () => {
     expect(propose(outsider).result).toBeErr(Cl.uint(401));
   });
 
-  it("allows only one live proposal per date", () => {
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+  it("allows only one live proposal per week", () => {
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     stake(voter1);
     expect(propose(voter1).result).toBeErr(Cl.uint(403));
   });
 
-  it("stores a digest that is stable for identical entries", () => {
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
-    const d = simnet.callReadOnlyFn(GOV, "get-entry-digest", [Cl.stringAscii(DATE)], deployer);
+  it("stores a digest over the entries", () => {
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    const d = simnet.callReadOnlyFn(GOV, "get-entry-digest", [Cl.stringAscii(WEEK)], deployer);
     expect((d.result as any).value).toBeDefined();
   });
 });
@@ -249,14 +297,14 @@ describe("voting", () => {
     fundPool();
     stake(proposer);
     stake(voter1);
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
   });
 
-  it("refuses the proposer voting on their own brief", () => {
+  it("refuses the proposer voting on their own week", () => {
     expect(vote(proposer, true).result).toBeErr(Cl.uint(423));
   });
 
-  it("refuses a correspondent named in the brief", () => {
+  it("refuses a correspondent named in the week", () => {
     stake(corrA);
     expect(vote(corrA, true).result).toBeErr(Cl.uint(406));
   });
@@ -267,7 +315,7 @@ describe("voting", () => {
   });
 
   it("refuses votes after the window closes", () => {
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    closeWindow();
     expect(vote(voter1, true).result).toBeErr(Cl.uint(407));
   });
 
@@ -283,29 +331,34 @@ describe("settle -- passed", () => {
     stake(proposer);
     stake(voter1);
     stake(voter2);
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    closeWindow();
   });
 
-  it("pays every entry its equal share, and the proposer their fee", () => {
+  it("pays each correspondent pro rata to their signal count", () => {
     const aBefore = sbtcOf(corrA);
     const bBefore = sbtcOf(corrB);
     const pBefore = sbtcOf(proposer);
 
     expect(settle().result).toBeOk(Cl.uint(1)); // STATUS_SETTLED
 
-    // A filed 7 of 12 signals, B filed 5.
-    expect(sbtcOf(corrA)).toBe(aBefore + BigInt(7 * PER_ENTRY));
-    expect(sbtcOf(corrB)).toBe(bBefore + BigInt(5 * PER_ENTRY));
+    expect(sbtcOf(corrA)).toBe(aBefore + BigInt(PAY_A));
+    expect(sbtcOf(corrB)).toBe(bBefore + BigInt(PAY_B));
     expect(sbtcOf(proposer)).toBe(pBefore + BigInt(FEE));
   });
 
-  it("draws exactly 1% of the pool and leaves the rest", () => {
+  it("values every signal identically regardless of who filed it", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
-    // 12 * 82_500 + 10_000 fee = 1_000_000 exactly, no remainder this run.
-    expect(poolOf()).toBe(BigInt(POOL - DRAW));
+    expect(BigInt(PAY_A) / BigInt(SIGNALS_A)).toBe(BigInt(PAY_B) / BigInt(SIGNALS_B));
+  });
+
+  it("draws no more than 0.5% of the pool, keeping the rounding remainder", () => {
+    expect(settle().result).toBeOk(Cl.uint(1));
+    // 84 * 5,892 + 5,000 fee = 499,928 -- 72 sats of rounding stay in the pool.
+    expect(poolOf()).toBe(BigInt(POOL - PAY_A - PAY_B - FEE));
+    expect(BigInt(POOL) - poolOf()).toBeLessThanOrEqual(BigInt(DRAW));
   });
 
   it("never touches staked collateral", () => {
@@ -313,26 +366,27 @@ describe("settle -- passed", () => {
     expect(stakedOf()).toBe(BigInt(3 * STAKE));
   });
 
-  it("marks every payout ref as paid", () => {
+  it("marks each correspondent's payout ref as paid", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
-    const ref = simnet.callReadOnlyFn(
-      GOV,
-      "payout-ref",
-      [Cl.stringAscii(DATE), Cl.buffer(signalId(1)), Cl.principal(corrA)],
-      deployer,
-    );
-    const paid = simnet.callReadOnlyFn(TREASURY, "is-paid", [ref.result as any], deployer);
-    expect(paid.result).toBeBool(true);
+    for (const who of [corrA, corrB]) {
+      const ref = simnet.callReadOnlyFn(
+        GOV,
+        "payout-ref",
+        [Cl.stringAscii(WEEK), Cl.principal(who)],
+        deployer,
+      );
+      const paid = simnet.callReadOnlyFn(TREASURY, "is-paid", [ref.result as any], deployer);
+      expect(paid.result).toBeBool(true);
+    }
   });
 
   it("releases the proposer's bond", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
-    const locked = simnet.callReadOnlyFn(GOV, "locked-of", [Cl.principal(proposer)], deployer);
-    expect((locked.result as any).value).toBe(0n);
+    expect(lockedOf(proposer)).toBe(0n);
     expect(stakeOf(proposer)).toBe(BigInt(STAKE));
   });
 
-  it("is terminal -- the date can never be settled or proposed again", () => {
+  it("is terminal -- the week can never be settled or proposed again", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
     expect(settle().result).toBeErr(Cl.uint(410));
     expect(propose().result).toBeErr(Cl.uint(410));
@@ -346,11 +400,11 @@ describe("settle -- rejected on merit", () => {
     stake(proposer);
     stake(voter1);
     stake(voter2);
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     // 50% yes -- quorum met, threshold (66%) missed.
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, false).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    closeWindow();
   });
 
   it("pays nobody", () => {
@@ -360,16 +414,15 @@ describe("settle -- rejected on merit", () => {
   });
 
   it("slashes the bond from stake into the pool", () => {
-    const bond = BigInt(DRAW / 10);
     expect(settle().result).toBeOk(Cl.uint(2));
-    expect(stakeOf(proposer)).toBe(BigInt(STAKE) - bond);
-    expect(poolOf()).toBe(BigInt(POOL) + bond);
-    expect(stakedOf()).toBe(BigInt(3 * STAKE) - bond);
+    expect(stakeOf(proposer)).toBe(BigInt(STAKE - BOND));
+    expect(poolOf()).toBe(BigInt(POOL + BOND));
+    expect(stakedOf()).toBe(BigInt(3 * STAKE - BOND));
   });
 
-  it("reopens the date for a corrected proposal", () => {
+  it("reopens the week for a corrected proposal", () => {
     expect(settle().result).toBeOk(Cl.uint(2));
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(briefStatus()).toBe(0n); // STATUS_OPEN
   });
 });
@@ -380,16 +433,15 @@ describe("settle -- expired on apathy", () => {
     fundPool();
     stake(proposer);
     stake(voter1);
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     // Nobody votes.
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    closeWindow();
   });
 
   it("returns the bond in full -- the proposer did nothing wrong", () => {
     expect(settle().result).toBeOk(Cl.uint(3)); // STATUS_EXPIRED
     expect(stakeOf(proposer)).toBe(BigInt(STAKE));
-    const locked = simnet.callReadOnlyFn(GOV, "locked-of", [Cl.principal(proposer)], deployer);
-    expect((locked.result as any).value).toBe(0n);
+    expect(lockedOf(proposer)).toBe(0n);
   });
 
   it("leaves the pool untouched", () => {
@@ -397,20 +449,16 @@ describe("settle -- expired on apathy", () => {
     expect(poolOf()).toBe(BigInt(POOL));
   });
 
-  it("reopens the date", () => {
+  it("reopens the week", () => {
     expect(settle().result).toBeOk(Cl.uint(3));
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
   });
 });
 
-describe("fee ref cannot collide with an entry ref", () => {
-  // Regression: the fee used to reuse `payout-ref` with an all-zero "reserved"
-  // signal id. Nothing stops a brief from containing exactly that entry paying
-  // exactly the proposer -- the refs would collide, the treasury would reject
-  // the second payout as ERR_ALREADY_PAID, and the brief could never settle.
-  // `fee-ref` now hashes a different tuple shape, so the two can never match.
-  const zeroId = new Uint8Array(16); // the old "reserved" value
-
+describe("fee ref cannot collide with a payout ref", () => {
+  // The fee hashes {f,r}; an entry payout hashes {d,r}. Consensus serialization
+  // encodes tuple field names, so the shapes can never produce equal bytes --
+  // even when the proposer is also a correspondent in their own week.
   beforeEach(() => {
     wire();
     fundPool();
@@ -419,68 +467,49 @@ describe("fee ref cannot collide with an entry ref", () => {
     stake(voter2);
   });
 
-  it("produces a different ref than an entry with the all-zero signal id", () => {
-    const entryRef = simnet.callReadOnlyFn(
+  it("produces different refs for the same (week, principal)", () => {
+    const payout = simnet.callReadOnlyFn(
       GOV,
       "payout-ref",
-      [Cl.stringAscii(DATE), Cl.buffer(zeroId), Cl.principal(proposer)],
+      [Cl.stringAscii(WEEK), Cl.principal(proposer)],
       deployer,
     );
-    const feeRef = simnet.callReadOnlyFn(
+    const fee = simnet.callReadOnlyFn(
       GOV,
       "fee-ref",
-      [Cl.stringAscii(DATE), Cl.principal(proposer)],
+      [Cl.stringAscii(WEEK), Cl.principal(proposer)],
       deployer,
     );
-    expect((entryRef.result as any).buffer).not.toEqual((feeRef.result as any).buffer);
+    expect((payout.result as any).buffer).not.toEqual((fee.result as any).buffer);
   });
 
-  it("settles a brief whose first entry is the proposer with the zero signal id", () => {
-    // The exact adversarial shape that used to brick settlement.
-    const hostile = Cl.list([
-      Cl.tuple({ signalId: Cl.buffer(zeroId), recipient: Cl.principal(proposer) }),
-      Cl.tuple({ signalId: Cl.buffer(signalId(1)), recipient: Cl.principal(corrA) }),
+  it("settles a week in which the proposer is also a paid correspondent", () => {
+    const hostile = entries([
+      [proposer, 10],
+      [corrA, 10],
     ]);
-    expect(propose(proposer, DATE, hostile).result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose(proposer, WEEK, hostile).result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
-    expect(settle().result).toBeOk(Cl.uint(1)); // STATUS_SETTLED, not a revert
-  });
-});
-
-describe("brief date must be a real key shape", () => {
-  beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-  });
-
-  it("rejects a correctly-sized date with separators in the wrong place", () => {
-    // Same length as a valid date, but would open a second settleable slot for
-    // the same brief if only the length were checked.
-    expect(propose(proposer, "21-07-2026").result).toBeErr(Cl.uint(420));
-  });
-
-  it("rejects a date with no separators at all", () => {
-    expect(propose(proposer, "2026072100").result).toBeErr(Cl.uint(420));
+    closeWindow();
+    expect(settle().result).toBeOk(Cl.uint(1)); // settles, does not revert
   });
 });
 
 describe("quorum is load-bearing", () => {
-  it("a lone minimum-stake member cannot approve a brief by themselves", () => {
+  it("a lone minimum-stake member cannot approve a week by themselves", () => {
     wire();
     fundPool();
     stake(proposer);
-    // One tiny voter against a large eligible base: 10k of 10M is 0.1%, far
-    // below the 15% quorum, and MIN_PARTICIPANTS is 2 regardless.
+    // 10k of a 10M eligible base is 0.1%, far below the 15% quorum -- and
+    // MIN_PARTICIPANTS is 2 regardless of weight.
     faucet(voter1);
     expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(MIN_STAKE)], voter1).result).toBeOk(
       Cl.uint(MIN_STAKE),
     );
-    expect(propose().result).toBeOk(Cl.stringAscii(DATE));
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    closeWindow();
 
     const aBefore = sbtcOf(corrA);
     expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED, not SETTLED

@@ -2,31 +2,31 @@
 
 A pool of Bitcoin that pays for journalism, allocated by vote.
 
-Anyone contributes sBTC. Once per brief, one proposal asks a single question:
-**was this brief worth paying for?** Members vote yes or no. Yes pays the
-correspondents named in that brief. No pays nobody and leaves the money in the
-pool.
+Anyone contributes sBTC. Once per week, one proposal asks a single question:
+**was this week's reporting worth paying for?** Members vote yes or no. Yes pays
+the correspondents named in that week's inscribed briefs. No pays nobody and
+leaves the money in the pool.
 
 No roles, no rates to administer, no operator, no oracle.
 
 ```
         contribute sBTC  ─────────────▶  news-treasury (Pool)
                                               │
-   brief compiled + inscribed                 │
+   week's briefs compiled + inscribed         │
               │                               │
               ▼                               │
-   propose-brief(date, inscription-id,        │
+   propose-brief(week, inscriptions,          │
                  entries)                     │
    bond locked from proposer's stake          │
               │                               │
               ▼                               │
-   144 burn blocks (~24h), stake-weighted     │
+   1008 burn blocks (~7 days), stake-weighted │
               │                               │
       ┌───────┴────────┬──────────────┐       │
       ▼                ▼              ▼       ▼
-   SETTLED          REJECTED       EXPIRED   draw = 1% of Pool,
-  entries paid    bond slashed    bond back   split equally per entry
-  (anyone calls)   date reopens   date reopens
+   SETTLED          REJECTED       EXPIRED   draw = 0.5% of Pool,
+  entries paid    bond slashed    bond back   split per signal
+  (anyone calls)   week reopens   week reopens
 ```
 
 ## Why the two balances are separate
@@ -36,11 +36,30 @@ No roles, no rates to administer, no operator, no oracle.
 | | |
 |---|---|
 | **Pool** | contributed sBTC. Pays journalists. Nobody can withdraw it. |
-| **Staked** | members' voting collateral. Refundable to the member who staked it. |
+| **Staked** | members' voting collateral. Refundable to whoever staked it. |
 
 The draw is a percentage of the **Pool**, never of total holdings. Without this
-split, an approved brief would pay correspondents out of the members' own
-stake and staking would quietly become a donation.
+split, an approved week would pay correspondents out of the members' own stake
+and staking would quietly become a donation. See the
+`never touches staked collateral` test.
+
+## The entry unit is a correspondent, not a signal
+
+An entry is `{recipient, signals}` — one row per correspondent, carrying how
+many of their signals appeared across the week's briefs. Every signal is worth
+exactly the same; the count is just the weight.
+
+This is a consequence of the weekly cadence. A week carries ~84 signals at
+current volume, and settling those individually would mean ~84 sBTC transfers
+in a single transaction — over the 30-entry list cap and a real block-cost
+risk. Collapsing to one row per correspondent gives identical arithmetic in
+~13 transfers.
+
+Duplicate correspondents are rejected at propose time. `payout-ref` is keyed on
+`(week, recipient)`, so a principal listed twice would produce the same ref for
+both rows, the treasury would reject the second as `ERR_ALREADY_PAID`, and the
+whole settlement would revert. Rejecting duplicates up front means a week that
+passes its vote can always be paid.
 
 ## Contracts
 
@@ -50,7 +69,7 @@ stake and staking would quietly become a donation.
 |---|---|---|
 | `deposit(amount)` | anyone | fund the pool |
 | `stake-in(amount)` | gov only | pull a member's collateral |
-| `execute-payout(recipient, amount, payout-ref)` | gov only | settle one entry |
+| `execute-payout(recipient, amount, payout-ref)` | gov only | settle one correspondent |
 | `execute-unstake(recipient, amount)` | gov only | return a member's stake |
 | `slash(amount)` | gov only | move a forfeited bond from Staked to Pool |
 
@@ -58,20 +77,16 @@ No admin withdraw, no open-ended transfer. Every outflow is gated on
 `contract-caller` being the wired gov contract, so no human can move funds
 directly. The deployer's only power is the one-time `set-gov` wiring.
 
-`payout-ref` = `sha256` of `{d: brief-date, s: signal-id, r: recipient}` in
-consensus serialization. A ref can never be settled twice, so anyone holding the
-brief inscription can recompute a ref and ask the treasury whether that signal
-was paid, and for how much.
+**Payout refs.** `payout-ref(week, recipient)` = `sha256` of `{d, r}`;
+`fee-ref(week, proposer)` = `sha256` of `{f, r}`. The **shapes differ**, and
+consensus serialization encodes tuple field names, so a correspondent's payout
+can never collide with the proposer's fee — including when the proposer is a
+correspondent in their own week. That case is tested.
 
-The proposer's success fee uses `fee-ref` = `sha256` of `{f: brief-date,
-r: proposer}` — a **different tuple shape**. Consensus serialization encodes
-field names, so `{f,r}` and `{d,s,r}` can never produce identical bytes. This is
-not cosmetic: an earlier version keyed the fee off `payout-ref` with a
-"reserved" all-zero signal id, and nothing prevents a brief from containing an
-entry with that exact signal id paying the proposer. The refs would collide, the
-treasury would reject the second payout as `ERR_ALREADY_PAID`, and that brief
-could never settle. Distinct shapes remove the failure mode rather than
-documenting around it. See the `fee ref cannot collide` tests.
+An earlier version keyed the fee off `payout-ref` with a "reserved" sentinel
+value; nothing stopped an entry from carrying that exact value and paying the
+proposer, which would have made the week permanently unsettleable. Distinct
+shapes remove the failure mode rather than documenting around it.
 
 ### `news-gov`
 
@@ -79,66 +94,106 @@ documenting around it. See the `fee ref cannot collide` tests.
 |---|---|---|
 | `stake(amount)` | anyone | join; weight = stake |
 | `unstake(amount)` | member | withdraw free, unlocked stake |
-| `propose-brief(date, inscription-id, entries)` | member | open the vote |
-| `vote(date, support)` | member | yes / no, stake-weighted |
-| `settle(date)` | **anyone** | conclude and, if passed, pay every entry |
+| `propose-brief(week, inscriptions, entries)` | member | open the vote |
+| `vote(week, support)` | member | yes / no, stake-weighted |
+| `settle(week)` | **anyone** | conclude and, if passed, pay every entry |
 
-A proposal carries a date, an inscription id, and up to 30
-`{signalId, recipient}` entries. **There is no free-form recipient field
+A proposal carries a week, up to 7 inscription ids, and up to 30
+`{recipient, signals}` entries. **There is no free-form recipient field
 anywhere in the system** — no proposal can express "send N sats to my address."
 
 ## Parameters
 
 These are contract constants, not governance knobs. Nothing in this system
-votes on a parameter; the only vote is yes/no on a brief.
+votes on a parameter; the only vote is yes/no on a week.
 
 | Constant | Value | |
 |---|---|---|
-| `VOTE_WINDOW` | 144 burn blocks | ~24h, closes before the next brief |
+| `VOTE_WINDOW` | 1008 burn blocks | ~7 days — one settlement per week |
 | `VOTING_THRESHOLD` | 66% | of cast weight |
 | `VOTING_QUORUM` | 15% | of eligible staked weight |
 | `MIN_PARTICIPANTS` | 2 | distinct voters |
 | `MIN_STAKE` | 10,000 sats | membership floor |
-| `DRAW_BPS` | 100 (1%) | of Pool, per approved brief |
+| `DRAW_BPS` | 50 (0.5%) | of Pool, per approved week |
 | `BOND_BPS` | 1,000 (10%) | of the pending draw |
 | `PROPOSER_FEE_BPS` | 100 (1%) | of the draw, on success only |
-| `MAX_ENTRIES` | 30 | matches the brief roster cap |
+| entry cap | 30 | enforced by the `(list 30 …)` type |
 
 **Quorum is not zero and must not be.** With no quorum a single member holding
 `MIN_STAKE` votes yes alone, reaches 100% of cast weight, and unilaterally
-spends a slice of everyone else's pool. Quorum is the only thing standing
-between the treasury and one 10k-sat principal — see the
-`quorum is load-bearing` test.
+spends a slice of everyone else's pool. See the `quorum is load-bearing` test.
 
-**Three outcomes, and the last two are different on purpose:**
+**Three outcomes, and the last two differ on purpose:**
 
-- `SETTLED` — quorum met, threshold met. Entries paid, bond released.
+- `SETTLED` — quorum + threshold met. Entries paid, bond released.
 - `REJECTED` — quorum met, threshold missed. Voters looked and said no. Bond
-  slashed into the pool, so the next approved brief pays slightly more.
-- `EXPIRED` — quorum never met. Nobody looked. **Bond returned in full.**
+  **slashed** into the pool, so the next approved week pays slightly more.
+- `EXPIRED` — quorum never met. Nobody looked. Bond **returned in full**.
 
 Slashing a proposer because *other people* failed to show up would end
 proposing within a week. Apathy costs a delay, never a bond.
 
+## Economics
+
+`DRAW_BPS` sets pool longevity. **Pool size sets correspondent income.** These
+are independent levers and it is worth being explicit about both.
+
+| Draw | Distributed / year | Half-life |
+|---|---|---|
+| 1% weekly | ~41% | 69 weeks |
+| **0.5% weekly** | **~23%** | **~2.6 years** |
+| 1% daily | ~97.5% | 69 days |
+
+At 0.5% weekly the pool survives long enough to prove the mechanism without
+continuous refilling.
+
+Stretching the *period* instead — monthly — would buy the same longevity while
+making both halves of the system too thin to work: the payout drops to a
+rounding error, and ~30 briefs per vote is more than a voter will realistically
+recompute against the inscriptions. The no-oracle design depends on them doing
+exactly that, so verification burden per vote is a hard constraint on how long
+a settlement period can be.
+
+**What a funder is buying.** At a 1 BTC pool and ~84 signals/week, an approved
+week pays ~5,892 sats per signal. Matching a 30,000-sat-per-signal rate at 0.5%
+weekly needs a pool of roughly **5 BTC**. Below that, the Legion is a supplement
+to existing payouts rather than a replacement — worth stating plainly to anyone
+deciding how much to contribute.
+
 ## No oracle
 
 Clarity cannot read a Bitcoin inscription, so these contracts do not try. The
-proposer submits the entries; the contract stores a canonical digest of them
-(`get-entry-digest`); verifiers recompute that digest from the named inscription
-off-chain. A tampered list fails the comparison, gets voted down, and costs the
-proposer their bond — so the attack costs the attacker and yields nothing.
+proposer submits the entries, the contract stores a canonical digest of them
+(`get-entry-digest`), and verifiers recompute that digest from the named
+inscriptions off-chain. A tampered list fails the comparison, gets voted down,
+and costs the proposer their bond — so the attack costs the attacker and yields
+nothing.
 
-Entries must ascend strictly by `signalId`. That canonical ordering is what
-makes the digest reproducible: two people building the same brief produce
-byte-identical lists, so verification is one hash comparison rather than a diff
-of an arbitrarily ordered list.
+## Worked example
+
+Pool 1.00 BTC. Week of 2026-07-20: 84 signals, **A** filed 49, **B** filed 35.
+
+```
+draw          = 0.5% of 100,000,000 =  500,000
+bond          = 10%  of 500,000     =   50,000   (locked from proposer stake)
+proposer fee  = 1%   of 500,000     =    5,000   (on success only)
+distributable =                        495,000
+per signal    = 495,000 / 84        =    5,892
+
+A = 49 x 5,892 = 288,708 sats
+B = 35 x 5,892 = 206,220 sats
+rounding remainder of 72 sats stays in the Pool
+```
+
+Every signal is worth the same regardless of who filed it — asserted directly
+in the suite.
 
 ## Develop
 
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 33 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 41 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via
@@ -155,42 +210,35 @@ treasury must publish first.
 3. Deployer calls `(contract-call? .news-treasury set-gov .news-gov)` — one-time;
    a second call returns `(err u403)`
 
-The sBTC token principal is compiled in
-(`STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token`, testnet). Retarget it
-in both contracts for mainnet.
-
 > `contract-call?` requires a literal contract identifier — a `define-constant`
 > bound to a contract principal passes `clarinet check` but fails at runtime with
 > `ContractCallExpectName`. The token is therefore written out at each call site.
 
 ## Conventions the contracts do not enforce
 
-**`inscriptionId` is an opaque `(buff 64)`.** The contract stores it and never
-interprets it, so off-chain tooling must agree on one encoding. Use the ordinal
-inscription id as ASCII bytes — `<txid>i<index>`, e.g.
-`33edd63e…3b195ei0` — since that is what the brief API returns and what a
-verifier will paste into an explorer. Two tools using different encodings will
-produce briefs that look wrong to each other's verifiers.
+**`inscriptions` are opaque `(buff 64)` values.** The contract stores them and
+never interprets them, so off-chain tooling must agree on one encoding. Use the
+ordinal inscription id as ASCII bytes — `<txid>i<index>` — since that is what
+the brief API returns and what a verifier will paste into an explorer.
 
-**`briefDate` is validated for shape, not for being a real date.** Length 10
-with separators at positions 4 and 7. `2026-13-45` passes; `21-07-2026` does
-not. The separator check exists because the date is the map key that gates
-settlement — length alone would let the same brief occupy two independently
-settleable slots.
+**`week` is validated for shape, not for being a real date.** Length 10 with
+separators at positions 4 and 7, conventionally the ISO date of the week's first
+brief. `2026-13-45` passes; `20-07-2026` does not. The separator check exists
+because the week string is the map key that gates settlement — length alone
+would let the same week occupy two independently settleable slots.
 
 ## Deliberate omissions
 
 **No pause, no upgrade path, no admin key.** Consistent with "immutable
 parameters, vote only on work" — but worth stating plainly for a contract that
 will hold real sBTC: if a parameter turns out wrong, the remedy is deploying a
-new pair and letting the old pool drain, not patching in place. Every parameter
-in the table above is therefore a decision you are making once.
+new pair and letting the old pool drain, not patching in place.
 
-**Mainnet is not wired.** The sBTC principal compiled into both contracts is the
-**testnet** token. Swap it at all four `contract-call?` sites in `news-treasury`
-plus the `SBTC` view constant, and re-run the suite, before any mainnet deploy.
+**Mainnet is not wired.** The sBTC principal compiled into `news-treasury` is
+the **testnet** token. Swap it at all four `contract-call?` sites plus the
+`SBTC` view constant, and re-run the suite, before any mainnet deploy.
 
 ## Not in scope
 
 This Legion never votes on people, roles, appointments, or succession. The only
-question it can be asked is whether a specific brief gets paid for.
+question it can be asked is whether a specific week's reporting gets paid for.

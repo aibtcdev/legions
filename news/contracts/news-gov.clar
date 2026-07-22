@@ -1,14 +1,21 @@
 ;; news-gov
 ;; Stake-weighted governance for the aibtc.news Legion.
 ;;
-;; ONE PROPOSAL TYPE, ONE QUESTION: was this brief worth paying for?
+;; ONE PROPOSAL TYPE, ONE QUESTION: was this week's reporting worth paying for?
 ;;
-;; A proposal names a brief date, the ordinal inscription that brief was written
-;; to, and the list of (signal-id, recipient) entries in it. There is no
+;; A proposal names the week's first brief date, the ordinal inscriptions the
+;; week's briefs were written to, and one entry per correspondent carrying how
+;; many of their signals appeared across them. There is no
 ;; free-form recipient field anywhere in this contract -- no proposal can express
 ;; "send N sats to my address." The only reachable outcome of a passing vote is
-;; that the correspondents named in an inscribed brief split a fixed percentage
-;; of the pool.
+;; that the correspondents named in the week's inscribed briefs split a fixed
+;; percentage of the pool, pro rata to how many signals each of them landed.
+;;
+;; WHY PER-CORRESPONDENT, NOT PER-SIGNAL. A week carries roughly 84 signals at
+;; current volume. Settling those individually would mean 84 sBTC transfers in
+;; one transaction -- over the list cap and a real block-cost risk. Collapsing to
+;; one entry per correspondent with a signal count gives identical arithmetic
+;; (every signal is still worth exactly the same) in ~13 transfers.
 ;;
 ;; NO ORACLE. Clarity cannot read a Bitcoin inscription, so this contract does
 ;; not try. The proposer submits the entries, the contract stores a canonical
@@ -31,9 +38,11 @@
 ;; -------------------------------------------------------------------
 (define-constant SELF (as-contract tx-sender))
 
-;; Voting window in BITCOIN blocks. ~144 blocks = ~24h, so a daily brief's vote
-;; closes before the next day's brief is inscribed.
-(define-constant VOTE_WINDOW u144)
+;; Voting window in BITCOIN blocks. ~1008 blocks = ~7 days: one settlement per
+;; week, so the pool draws 1% per week rather than 1% per day. At a daily
+;; cadence the same rate distributes ~97.5% of the pool in a year; weekly, ~41%,
+;; which leaves the pool alive into a second year without continuous refilling.
+(define-constant VOTE_WINDOW u1008)
 
 ;; Percentage of CAST weight that must be yes for a brief to pass.
 (define-constant VOTING_THRESHOLD u66)
@@ -51,9 +60,17 @@
 ;; Membership floor.
 (define-constant MIN_STAKE u10000)
 
-;; Draw per approved brief, in basis points of the POOL (contributed sBTC only,
-;; never members' stake). 100 bps = 1%.
-(define-constant DRAW_BPS u100)
+;; Draw per approved week, in basis points of the POOL (contributed sBTC only,
+;; never members' stake). 50 bps = 0.5%.
+;;
+;; Cadence sets pool longevity; pool size sets correspondent income. At 0.5%
+;; weekly the pool distributes ~23% per year and half-lives in ~2.6 years, so it
+;; survives long enough to prove the mechanism without continuous refilling.
+;; Stretching the PERIOD instead (monthly) would buy the same longevity at the
+;; cost of making both the payout and the oversight too thin to function: ~30
+;; briefs is more than a voter will actually recompute against the inscriptions,
+;; and the no-oracle design depends on them doing exactly that.
+(define-constant DRAW_BPS u50)
 
 ;; Proposal bond, in basis points of the pending draw. Scales with the pool, so
 ;; it stays meaningful as TVL grows and never needs a governance vote.
@@ -84,7 +101,7 @@
 (define-constant ERR_ZERO_AMOUNT (err u409)) ;; stake/unstake must be > 0
 (define-constant ERR_BRIEF_SETTLED (err u410)) ;; terminal; can never be re-proposed
 (define-constant ERR_EMPTY_ENTRIES (err u411)) ;; a brief must name at least one entry
-(define-constant ERR_NOT_SORTED (err u412)) ;; entries must ascend by signal-id
+(define-constant ERR_BAD_ENTRIES (err u412)) ;; duplicate correspondent, or a zero signal count
 (define-constant ERR_INSUFFICIENT_BOND (err u413)) ;; free stake cannot cover the bond
 (define-constant ERR_BELOW_MIN_STAKE (err u414)) ;; stake/remainder below the floor
 (define-constant ERR_STAKE_LOCKED (err u415)) ;; unstake before the lock expires
@@ -125,9 +142,10 @@
   (string-ascii 10)
   {
     proposer: principal,
-    inscriptionId: (buff 64),
+    inscriptions: (list 7 (buff 64)),
     digest: (buff 32),
     entryCount: uint,
+    totalSignals: uint,
     bond: uint,
     createdBurn: uint,
     voteEnd: uint,
@@ -139,11 +157,13 @@
   }
 )
 
+;; One entry per correspondent: how many of their signals appeared in the
+;; week's briefs. Every signal is worth the same; the count is the weight.
 (define-map BriefEntries
   (string-ascii 10)
   (list 30 {
-    signalId: (buff 16),
     recipient: principal,
+    signals: uint,
   })
 )
 
@@ -244,13 +264,11 @@
 ;; from the same tuple shape, so anyone can ask the treasury whether a given
 ;; signal has been paid.
 (define-read-only (payout-ref
-    (briefDate (string-ascii 10))
-    (signalId (buff 16))
+    (weekStart (string-ascii 10))
     (recipient principal)
   )
   (sha256 (unwrap-panic (to-consensus-buff? {
-    d: briefDate,
-    s: signalId,
+    d: weekStart,
     r: recipient,
   })))
 )
@@ -261,12 +279,12 @@
 ;; ({f,r} vs {d,s,r}). Consensus serialization encodes tuple field names, so the
 ;; two shapes can never produce the same bytes and therefore never the same ref.
 ;;
-;; The earlier approach -- reusing `payout-ref` with a "reserved" all-zero signal
-;; id -- was not safe: nothing stops a brief from containing an entry whose
-;; signalId is 16 zero bytes and whose recipient is the proposer. That entry's
-;; ref would equal the fee ref, the treasury would reject the second payout as
-;; ERR_ALREADY_PAID, and settling that brief would revert forever. Distinct
-;; shapes remove the failure mode instead of documenting it away.
+;; An earlier version keyed the fee off `payout-ref` with a "reserved" sentinel
+;; value, which was not safe: nothing stopped an entry from carrying that exact
+;; value and paying the proposer. The refs would collide, the treasury would
+;; reject the second payout as ERR_ALREADY_PAID, and settling that week would
+;; revert forever. Distinct shapes remove the failure mode by construction
+;; instead of documenting around it.
 (define-read-only (fee-ref
     (briefDate (string-ascii 10))
     (proposer principal)
@@ -280,39 +298,45 @@
 ;; -------------------------------------------------------------------
 ;; Private helpers
 ;; -------------------------------------------------------------------
-;; Entries must ascend strictly by signal-id. Enforcing a canonical order is
-;; what makes the stored digest reproducible: two proposers building the same
-;; brief produce byte-identical entry lists, so verifiers compare one hash
-;; rather than diffing an arbitrarily ordered list.
-(define-private (check-sorted
+;; Validates the entry list in one pass: every correspondent appears at most
+;; once, and every signal count is positive.
+;;
+;; The duplicate check is the load-bearing half. `payout-ref` is keyed on
+;; (week, recipient), so a correspondent listed twice would produce the same ref
+;; for both entries -- the treasury would reject the second as ERR_ALREADY_PAID
+;; and the entire settlement would revert. Rejecting duplicates at propose time
+;; means a week that passes its vote can always be paid.
+(define-private (check-entry
     (entry {
-      signalId: (buff 16),
       recipient: principal,
+      signals: uint,
     })
     (acc {
-      prev: (buff 16),
+      seen: (list 30 principal),
       ok: bool,
-      first: bool,
     })
   )
   (if (not (get ok acc))
     acc
     {
-      prev: (get signalId entry),
-      ok: (or (get first acc) (> (get signalId entry) (get prev acc))),
-      first: false,
+      seen: (unwrap-panic (as-max-len? (append (get seen acc) (get recipient entry)) u30)),
+      ok: (and
+        (> (get signals entry) u0)
+        (is-none (index-of? (get seen acc) (get recipient entry)))
+      ),
     }
   )
 )
 
-(define-private (collect-recipient
+;; Total signals across the week -- the denominator for the per-signal share.
+(define-private (sum-signals
     (entry {
-      signalId: (buff 16),
       recipient: principal,
+      signals: uint,
     })
-    (acc (list 30 principal))
+    (acc uint)
   )
-  (unwrap-panic (as-max-len? (append acc (get recipient entry)) u30))
+  (+ acc (get signals entry))
 )
 
 ;; Pays one entry. Threaded through `fold`, so it cannot use `try!` -- it carries
@@ -320,12 +344,12 @@
 ;; aborts the whole transaction, reverting any transfers already made.
 (define-private (pay-entry
     (entry {
-      signalId: (buff 16),
       recipient: principal,
+      signals: uint,
     })
     (acc {
       briefDate: (string-ascii 10),
-      amount: uint,
+      perSignal: uint,
       ok: bool,
     })
   )
@@ -333,8 +357,8 @@
     acc
     (merge acc { ok: (is-ok (contract-call? .news-treasury execute-payout
       (get recipient entry)
-      (get amount acc)
-      (payout-ref (get briefDate acc) (get signalId entry) (get recipient entry))
+      (* (get perSignal acc) (get signals entry))
+      (payout-ref (get briefDate acc) (get recipient entry))
     )) })
   )
 )
@@ -410,10 +434,10 @@
 ;; draw, which they forfeit only if voters reject the brief on its merits.
 (define-public (propose-brief
     (briefDate (string-ascii 10))
-    (inscriptionId (buff 64))
+    (inscriptions (list 7 (buff 64)))
     (entries (list 30 {
-      signalId: (buff 16),
       recipient: principal,
+      signals: uint,
     }))
   )
   (let (
@@ -425,11 +449,11 @@
       (alreadyLocked (locked-of tx-sender))
       (snapshot (var-get TotalStaked))
       (voteEnd (+ burn-block-height VOTE_WINDOW))
-      (sortCheck (fold check-sorted entries {
-        prev: 0x,
+      (entryCheck (fold check-entry entries {
+        seen: (list),
         ok: true,
-        first: true,
       }))
+      (totalSignals (fold sum-signals entries u0))
     )
     ;; A live vote blocks a second proposal; a settled date is terminal.
     (match existing
@@ -452,9 +476,9 @@
       )
       ERR_BAD_DATE
     )
-    (asserts! (> (len inscriptionId) u0) ERR_BAD_INSCRIPTION)
+    (asserts! (> (len inscriptions) u0) ERR_BAD_INSCRIPTION)
     (asserts! (> (len entries) u0) ERR_EMPTY_ENTRIES)
-    (asserts! (get ok sortCheck) ERR_NOT_SORTED)
+    (asserts! (get ok entryCheck) ERR_BAD_ENTRIES)
     (asserts! (> pool u0) ERR_EMPTY_POOL)
     ;; Only a member may propose, and their free stake must cover the bond.
     (asserts! (>= proposerStake MIN_STAKE) ERR_INELIGIBLE)
@@ -463,12 +487,13 @@
     (map-set LockedStake tx-sender (+ alreadyLocked bond))
     (extend-lock tx-sender voteEnd)
     (map-set BriefEntries briefDate entries)
-    (map-set BriefRecipients briefDate (fold collect-recipient entries (list)))
+    (map-set BriefRecipients briefDate (get seen entryCheck))
     (map-set Briefs briefDate {
       proposer: tx-sender,
-      inscriptionId: inscriptionId,
+      inscriptions: inscriptions,
       digest: (sha256 (unwrap-panic (to-consensus-buff? entries))),
       entryCount: (len entries),
+      totalSignals: totalSignals,
       bond: bond,
       createdBurn: burn-block-height,
       voteEnd: voteEnd,
@@ -484,9 +509,10 @@
       event: "propose-brief",
       briefDate: briefDate,
       proposer: tx-sender,
-      inscriptionId: inscriptionId,
+      inscriptions: inscriptions,
       digest: (sha256 (unwrap-panic (to-consensus-buff? entries))),
       entryCount: (len entries),
+      totalSignals: totalSignals,
       bond: bond,
       drawPreview: draw,
       voteEnd: voteEnd,
@@ -587,7 +613,7 @@
       (draw (/ (* pool DRAW_BPS) u10000))
       (fee (/ (* draw PROPOSER_FEE_BPS) u10000))
       (distributable (- draw fee))
-      (perEntry (/ distributable (get entryCount brief)))
+      (perSignal (/ distributable (get totalSignals brief)))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
     (asserts! (>= burn-block-height (get voteEnd brief)) ERR_VOTE_STILL_OPEN)
@@ -644,14 +670,14 @@
         )
         ;; SETTLED -- pay every entry, then the proposer's fee.
         (begin
-          (asserts! (> perEntry u0) ERR_DUST_DRAW)
+          (asserts! (> perSignal u0) ERR_DUST_DRAW)
           ;; Mark terminal BEFORE paying: effects before interaction, and the
           ;; date can never be re-proposed or re-settled.
           (map-set Briefs briefDate (merge brief { status: STATUS_SETTLED }))
           (asserts!
             (get ok (fold pay-entry entries {
               briefDate: briefDate,
-              amount: perEntry,
+              perSignal: perSignal,
               ok: true,
             }))
             ERR_PAYOUT_FAILED
@@ -672,7 +698,8 @@
             outcome: "settled",
             draw: draw,
             proposerFee: fee,
-            perEntry: perEntry,
+            perSignal: perSignal,
+            totalSignals: (get totalSignals brief),
             entryCount: (get entryCount brief),
             yesWeight: (get yesWeight brief),
             noWeight: (get noWeight brief),
