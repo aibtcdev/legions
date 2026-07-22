@@ -255,6 +255,28 @@
   })))
 )
 
+;; The payout reference for the proposer's success fee.
+;;
+;; This deliberately hashes a tuple with DIFFERENT FIELD NAMES from `payout-ref`
+;; ({f,r} vs {d,s,r}). Consensus serialization encodes tuple field names, so the
+;; two shapes can never produce the same bytes and therefore never the same ref.
+;;
+;; The earlier approach -- reusing `payout-ref` with a "reserved" all-zero signal
+;; id -- was not safe: nothing stops a brief from containing an entry whose
+;; signalId is 16 zero bytes and whose recipient is the proposer. That entry's
+;; ref would equal the fee ref, the treasury would reject the second payout as
+;; ERR_ALREADY_PAID, and settling that brief would revert forever. Distinct
+;; shapes remove the failure mode instead of documenting it away.
+(define-read-only (fee-ref
+    (briefDate (string-ascii 10))
+    (proposer principal)
+  )
+  (sha256 (unwrap-panic (to-consensus-buff? {
+    f: briefDate,
+    r: proposer,
+  })))
+)
+
 ;; -------------------------------------------------------------------
 ;; Private helpers
 ;; -------------------------------------------------------------------
@@ -418,8 +440,18 @@
       )
       true
     )
-    ;; Sanitize the map key: a brief date is exactly "YYYY-MM-DD".
-    (asserts! (is-eq (len briefDate) u10) ERR_BAD_DATE)
+    ;; Sanitize the map key: a brief date is exactly "YYYY-MM-DD". Checking the
+    ;; separators as well as the length matters because the date IS the map key
+    ;; that gates settlement -- without it, "2026-07-21" and "21-07-2026" are two
+    ;; independently settleable slots for the same brief.
+    (asserts!
+      (and
+        (is-eq (len briefDate) u10)
+        (is-eq (slice? briefDate u4 u5) (some "-"))
+        (is-eq (slice? briefDate u7 u8) (some "-"))
+      )
+      ERR_BAD_DATE
+    )
     (asserts! (> (len inscriptionId) u0) ERR_BAD_INSCRIPTION)
     (asserts! (> (len entries) u0) ERR_EMPTY_ENTRIES)
     (asserts! (get ok sortCheck) ERR_NOT_SORTED)
@@ -624,12 +656,13 @@
             }))
             ERR_PAYOUT_FAILED
           )
-          ;; Proposer fee, keyed on a reserved all-zero signal id so it can never
-          ;; collide with a real entry's payout ref.
+          ;; Proposer fee. Keyed with `fee-ref`, whose tuple SHAPE differs from an
+          ;; entry's, so collision is structurally impossible -- see the note on
+          ;; `fee-ref`.
           (and (> fee u0)
             (unwrap!
               (contract-call? .news-treasury execute-payout proposer fee
-                (payout-ref briefDate 0x00000000000000000000000000000000 proposer)
+                (fee-ref briefDate proposer)
               )
               ERR_PAYOUT_FAILED
             ))

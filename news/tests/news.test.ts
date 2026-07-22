@@ -403,6 +403,70 @@ describe("settle -- expired on apathy", () => {
   });
 });
 
+describe("fee ref cannot collide with an entry ref", () => {
+  // Regression: the fee used to reuse `payout-ref` with an all-zero "reserved"
+  // signal id. Nothing stops a brief from containing exactly that entry paying
+  // exactly the proposer -- the refs would collide, the treasury would reject
+  // the second payout as ERR_ALREADY_PAID, and the brief could never settle.
+  // `fee-ref` now hashes a different tuple shape, so the two can never match.
+  const zeroId = new Uint8Array(16); // the old "reserved" value
+
+  beforeEach(() => {
+    wire();
+    fundPool();
+    stake(proposer);
+    stake(voter1);
+    stake(voter2);
+  });
+
+  it("produces a different ref than an entry with the all-zero signal id", () => {
+    const entryRef = simnet.callReadOnlyFn(
+      GOV,
+      "payout-ref",
+      [Cl.stringAscii(DATE), Cl.buffer(zeroId), Cl.principal(proposer)],
+      deployer,
+    );
+    const feeRef = simnet.callReadOnlyFn(
+      GOV,
+      "fee-ref",
+      [Cl.stringAscii(DATE), Cl.principal(proposer)],
+      deployer,
+    );
+    expect((entryRef.result as any).buffer).not.toEqual((feeRef.result as any).buffer);
+  });
+
+  it("settles a brief whose first entry is the proposer with the zero signal id", () => {
+    // The exact adversarial shape that used to brick settlement.
+    const hostile = Cl.list([
+      Cl.tuple({ signalId: Cl.buffer(zeroId), recipient: Cl.principal(proposer) }),
+      Cl.tuple({ signalId: Cl.buffer(signalId(1)), recipient: Cl.principal(corrA) }),
+    ]);
+    expect(propose(proposer, DATE, hostile).result).toBeOk(Cl.stringAscii(DATE));
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    expect(settle().result).toBeOk(Cl.uint(1)); // STATUS_SETTLED, not a revert
+  });
+});
+
+describe("brief date must be a real key shape", () => {
+  beforeEach(() => {
+    wire();
+    fundPool();
+    stake(proposer);
+  });
+
+  it("rejects a correctly-sized date with separators in the wrong place", () => {
+    // Same length as a valid date, but would open a second settleable slot for
+    // the same brief if only the length were checked.
+    expect(propose(proposer, "21-07-2026").result).toBeErr(Cl.uint(420));
+  });
+
+  it("rejects a date with no separators at all", () => {
+    expect(propose(proposer, "2026072100").result).toBeErr(Cl.uint(420));
+  });
+});
+
 describe("quorum is load-bearing", () => {
   it("a lone minimum-stake member cannot approve a brief by themselves", () => {
     wire();

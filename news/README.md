@@ -63,6 +63,16 @@ consensus serialization. A ref can never be settled twice, so anyone holding the
 brief inscription can recompute a ref and ask the treasury whether that signal
 was paid, and for how much.
 
+The proposer's success fee uses `fee-ref` = `sha256` of `{f: brief-date,
+r: proposer}` — a **different tuple shape**. Consensus serialization encodes
+field names, so `{f,r}` and `{d,s,r}` can never produce identical bytes. This is
+not cosmetic: an earlier version keyed the fee off `payout-ref` with a
+"reserved" all-zero signal id, and nothing prevents a brief from containing an
+entry with that exact signal id paying the proposer. The refs would collide, the
+treasury would reject the second payout as `ERR_ALREADY_PAID`, and that brief
+could never settle. Distinct shapes remove the failure mode rather than
+documenting around it. See the `fee ref cannot collide` tests.
+
 ### `news-gov`
 
 | Entrypoint | Who | What |
@@ -152,6 +162,33 @@ in both contracts for mainnet.
 > `contract-call?` requires a literal contract identifier — a `define-constant`
 > bound to a contract principal passes `clarinet check` but fails at runtime with
 > `ContractCallExpectName`. The token is therefore written out at each call site.
+
+## Conventions the contracts do not enforce
+
+**`inscriptionId` is an opaque `(buff 64)`.** The contract stores it and never
+interprets it, so off-chain tooling must agree on one encoding. Use the ordinal
+inscription id as ASCII bytes — `<txid>i<index>`, e.g.
+`33edd63e…3b195ei0` — since that is what the brief API returns and what a
+verifier will paste into an explorer. Two tools using different encodings will
+produce briefs that look wrong to each other's verifiers.
+
+**`briefDate` is validated for shape, not for being a real date.** Length 10
+with separators at positions 4 and 7. `2026-13-45` passes; `21-07-2026` does
+not. The separator check exists because the date is the map key that gates
+settlement — length alone would let the same brief occupy two independently
+settleable slots.
+
+## Deliberate omissions
+
+**No pause, no upgrade path, no admin key.** Consistent with "immutable
+parameters, vote only on work" — but worth stating plainly for a contract that
+will hold real sBTC: if a parameter turns out wrong, the remedy is deploying a
+new pair and letting the old pool drain, not patching in place. Every parameter
+in the table above is therefore a decision you are making once.
+
+**Mainnet is not wired.** The sBTC principal compiled into both contracts is the
+**testnet** token. Swap it at all four `contract-call?` sites in `news-treasury`
+plus the `SBTC` view constant, and re-run the suite, before any mainnet deploy.
 
 ## Not in scope
 
