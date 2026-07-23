@@ -107,7 +107,7 @@
 (define-constant ERR_ZERO_AMOUNT (err u409)) ;; stake/unstake must be > 0
 (define-constant ERR_BRIEF_SETTLED (err u410)) ;; terminal; can never be re-proposed
 (define-constant ERR_EMPTY_ENTRIES (err u411)) ;; a brief must name at least one entry
-(define-constant ERR_BAD_ENTRIES (err u412)) ;; duplicate correspondent, or a zero signal count
+(define-constant ERR_BAD_ENTRIES (err u412)) ;; not canonically ordered, duplicate, or zero count
 (define-constant ERR_INSUFFICIENT_BOND (err u413)) ;; free stake cannot cover the bond
 (define-constant ERR_BELOW_MIN_STAKE (err u414)) ;; stake/remainder below the floor
 (define-constant ERR_STAKE_LOCKED (err u415)) ;; unstake before the lock expires
@@ -344,19 +344,41 @@
       signals: uint,
     })
     (acc {
+      prev: (buff 160),
       seen: (list 30 principal),
       ok: bool,
+      first: bool,
     })
   )
-  (if (not (get ok acc))
-    acc
-    {
-      seen: (unwrap-panic (as-max-len? (append (get seen acc) (get recipient entry)) u30)),
-      ok: (and
-        (> (get signals entry) u0)
-        (is-none (index-of? (get seen acc) (get recipient entry)))
-      ),
-    }
+  (let ((key (unwrap-panic (as-max-len?
+      (unwrap-panic (to-consensus-buff? (get recipient entry)))
+      u160
+    ))))
+    (if (not (get ok acc))
+      acc
+      {
+        prev: key,
+        seen: (unwrap-panic (as-max-len? (append (get seen acc) (get recipient entry)) u30)),
+        ;; STRICTLY ascending by the recipient's consensus bytes. Two properties
+        ;; fall out of the one check:
+        ;;
+        ;;   1. no duplicate correspondent -- two rows for one principal would
+        ;;      produce the same payout-ref and revert the settlement.
+        ;;   2. the entry list is CANONICAL -- any verifier that reconstructs the
+        ;;      same payout set from the briefs produces byte-identical entries,
+        ;;      so `get-entry-digest` is reproducible off-chain and checking a
+        ;;      proposal is one hash equality rather than a set diff.
+        ;;
+        ;; (2) is load-bearing for the whole no-oracle design: verification is
+        ;; done by agents, and agents that each pick their own ordering would
+        ;; compute different digests and vote down valid weeks.
+        ok: (and
+          (> (get signals entry) u0)
+          (or (get first acc) (> key (get prev acc)))
+        ),
+        first: false,
+      }
+    )
   )
 )
 
@@ -486,8 +508,10 @@
       (snapshot (var-get TotalStaked))
       (voteEnd (+ burn-block-height VOTE_WINDOW))
       (entryCheck (fold check-entry entries {
+        prev: 0x,
         seen: (list),
         ok: true,
+        first: true,
       }))
       (totalSignals (fold sum-signals entries u0))
     )

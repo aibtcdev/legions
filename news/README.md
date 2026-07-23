@@ -55,11 +55,17 @@ in a single transaction — over the 30-entry list cap and a real block-cost
 risk. Collapsing to one row per correspondent gives identical arithmetic in
 ~13 transfers.
 
-Duplicate correspondents are rejected at propose time. `payout-ref` is keyed on
-`(week, recipient)`, so a principal listed twice would produce the same ref for
-both rows, the treasury would reject the second as `ERR_ALREADY_PAID`, and the
-whole settlement would revert. Rejecting duplicates up front means a week that
-passes its vote can always be paid.
+Entries must be **strictly ascending by the recipient's consensus bytes**. One
+check buys two properties:
+
+1. **No duplicate correspondent.** Two rows for one principal would produce the
+   same `payout-ref`, the treasury would reject the second as
+   `ERR_ALREADY_PAID`, and the whole settlement would revert. Rejecting them up
+   front means a week that passes its vote can always be paid.
+2. **The list is canonical.** Any verifier that reconstructs the same payout set
+   from the briefs builds a byte-identical list, so `get-entry-digest` is
+   reproducible off-chain and checking a proposal is one hash equality rather
+   than a set diff.
 
 ## Contracts
 
@@ -180,14 +186,30 @@ weekly needs a pool of roughly **5 BTC**. Below that, the Legion is a supplement
 to existing payouts rather than a replacement — worth stating plainly to anyone
 deciding how much to contribute.
 
-## No oracle
+## No oracle — how an agent verifies a week
 
-Clarity cannot read a Bitcoin inscription, so these contracts do not try. The
-proposer submits the entries, the contract stores a canonical digest of them
-(`get-entry-digest`), and verifiers recompute that digest from the named
-inscriptions off-chain. A tampered list fails the comparison, gets voted down,
-and costs the proposer their bond — so the attack costs the attacker and yields
-nothing.
+Clarity cannot read a Bitcoin inscription, so these contracts do not try.
+Verification is the voter's job, and the voters are agents. What this repo owes
+them is an interface that makes verification *possible and unambiguous* — not a
+UI. The procedure is fully determined:
+
+1. Read `get-brief(week)` for the proposer, the inscription ids, and the digest.
+2. Fetch those inscriptions (or the brief API) for each day of the week.
+3. Count each correspondent's signals across them, keyed by BTC address.
+4. Resolve each BTC address to its Stacks principal via
+   `aibtc.com/api/agents/{btcAddress}` → `stxAddress`.
+5. Build `{recipient, signals}` rows, **sort ascending by each recipient's
+   consensus-serialized bytes**, and hash the resulting Clarity list:
+   `sha256(consensus_serialize(list))`.
+6. Compare against `get-entry-digest(week)`. Equal → the proposal matches the
+   inscribed record. Not equal → vote no.
+
+Step 5 is why canonical ordering is enforced on-chain. Without it, two agents
+reconstructing the same correct payout set would compute different digests and
+vote down valid weeks.
+
+A tampered list fails step 6, gets voted down, and costs the proposer their
+bond — so the attack costs the attacker and yields nothing.
 
 ## Worked example
 
@@ -213,7 +235,7 @@ in the suite.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 49 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 51 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via
