@@ -22,6 +22,7 @@ const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
 // Must match news-gov.clar.
 const VOTE_WINDOW = 36; // TEST TIMING: stacks blocks
 const VETO_WINDOW = 12;
+const CONCLUDE_WINDOW = 48;
 const MIN_WEIGHT = 10_000;
 
 const WEEK = "2026-07-20";
@@ -625,15 +626,34 @@ describe("the draw is snapshotted at propose, so a late conclude cannot inflate 
     expect(sbtcOf(corrB)).toBe(bBefore + BigInt(PAY_B));
   });
 
-  it("concludes fine long after the windows close, with no deadline to miss", () => {
+  it("still pays the snapshot if concluded late, but inside the window", () => {
     fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + 500); // very late
+    // Late, but within CONCLUDE_WINDOW.
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + 40);
     const aBefore = sbtcOf(corrA);
-    expect(settle().result).toBeOk(Cl.uint(1)); // still PASSED, still pays
+    expect(settle().result).toBeOk(Cl.uint(1)); // PASSED, still pays the snapshot
     expect(sbtcOf(corrA)).toBe(aBefore + BigInt(PAY_A));
+  });
+
+  it("fails as not-concluded once the conclude window closes, paying nobody", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
+
+    const aBefore = sbtcOf(corrA);
+    expect(settle().result).toBeOk(Cl.uint(2)); // FAILED
+    expect(sbtcOf(corrA)).toBe(aBefore); // nobody paid
+    expect(poolOf()).toBe(BigInt(POOL)); // no money moved
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB)); // bond released, not burned
+    expect(lockedOf(proposer)).toBe(0n);
+    // No cooldown: someone else failing to press a button is not the
+    // proposer's fault, so they may re-propose immediately.
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
   });
 
   it("rejects a week at propose time if the draw cannot cover one sat per signal", () => {
@@ -684,8 +704,12 @@ describe("parameters and phase are readable on chain", () => {
     expect(phase()).toContain("veto");
     simnet.mineEmptyBlocks(VETO_WINDOW);
     expect(phase()).toContain("concludable");
-    expect(settle().result).toBeOk(Cl.uint(2)); // FAILED, no quorum
-    expect(phase()).toContain("failed");
+    // "concludable" must not be open-ended: past the window, concluding FAILS
+    // the week, so the phase has to say so rather than reassure.
+    simnet.mineEmptyBlocks(CONCLUDE_WINDOW);
+    expect(phase()).toContain("lapsed");
+    expect(settle().result).toBeOk(Cl.uint(2)); // FAILED
+    expect(phase()).toContain("failed"); // terminal, not "concluded"
   });
 });
 

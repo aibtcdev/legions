@@ -20,7 +20,7 @@
 //    propose                     submit the sample week (see WEEK/ENTRIES)
 //    vote <yes|no>               vote on the open week
 //    veto                        object during the veto window
-//    settle                      conclude and pay out
+//    conclude                    work out the outcome and, if passed, pay out
 // ─────────────────────────────────────────────────────────────────────────────
 import {
   makeContractCall, broadcastTransaction, AnchorMode, PostConditionMode,
@@ -35,7 +35,7 @@ import { generateWallet } from '@stacks/wallet-sdk';
 const API = process.env.STACKS_API || 'https://api.testnet.hiro.so';
 const network = new StacksTestnet({ url: API });
 
-const LEGION = 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW';
+const LEGION = 'ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3'; // v2
 const GOV = 'news-gov';
 const TREASURY = 'news-treasury';
 
@@ -121,10 +121,11 @@ async function status() {
   const b = brief.value?.value;
   if (!b) { console.log(`week ${WEEK}    not proposed`); return; }
   const g = (k) => b[k]?.value?.value ?? b[k]?.value;
-  const STATUS = ['OPEN', 'SETTLED', 'REJECTED', 'EXPIRED', 'VETOED'];
+  const STATUS = ['OPEN', 'PASSED', 'FAILED'];
   const voteEnd = Number(g('voteEnd'));
   console.log(`week ${WEEK}`);
-  console.log(`  status      ${STATUS[Number(g('status'))]}`);
+  console.log(`  status      ${STATUS[Number(g('status'))]}${g('reason') ? ` (${g('reason')})` : ''}`);
+  console.log(`  draw        ${g('draw')} sats, snapshotted at propose`);
   console.log(`  proposer    ${g('proposer')}`);
   console.log(`  signals     ${g('totalSignals')} across ${g('entryCount')} correspondents`);
   console.log(`  bond        ${g('bond')}`);
@@ -186,7 +187,7 @@ if (step === 'status') {
     });
   } else if (step === 'veto') {
     await send({ contract: GOV, fn: 'veto', args: [stringAsciiCV(WEEK)], senderKey: pk, postConditions: [] });
-  } else if (step === 'settle') {
+  } else if (step === 'conclude') {
     // settle moves sBTC OUT OF THE TREASURY CONTRACT to each correspondent and
     // the proposer, not out of the signer. A condition on the signer therefore
     // covers nothing, and in DENY mode every transfer must be covered, so the
@@ -195,13 +196,19 @@ if (step === 'status') {
     //
     // Post-conditions aggregate per (principal, asset), so one condition covers
     // all three transfers: entries + proposer fee == the draw exactly.
-    const bal = await ro(TREASURY, 'get-balance');
-    const draw = (BigInt(bal.value) * 50n) / 10000n;
-    console.log(`pool ${bal.value}, draw ${draw} -- treasury must send exactly this`);
+    // The draw is snapshotted on the brief, not recomputed from the pool. And
+    // perSignal is floored, so the real spend is perSignal * totalSignals,
+    // which can be a few sats under the draw.
+    const brief = await ro(GOV, 'get-brief', [stringAsciiCV(WEEK)]);
+    const b = brief.value.value;
+    const draw = BigInt(b.draw.value);
+    const totalSignals = BigInt(b.totalSignals.value);
+    const spend = (draw / totalSignals) * totalSignals;
+    console.log(`draw ${draw} over ${totalSignals} signals -> treasury sends exactly ${spend}`);
     await send({
-      contract: GOV, fn: 'settle', args: [stringAsciiCV(WEEK)], senderKey: pk,
+      contract: GOV, fn: 'conclude', args: [stringAsciiCV(WEEK)], senderKey: pk,
       postConditions: [makeContractFungiblePostCondition(
-        LEGION, TREASURY, FungibleConditionCode.Equal, draw,
+        LEGION, TREASURY, FungibleConditionCode.Equal, spend,
         createAssetInfo(SBTC.address, SBTC.name, SBTC.asset),
       )],
     });

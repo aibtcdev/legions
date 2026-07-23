@@ -77,6 +77,25 @@
 ;; sevenths of the whole electorate.
 (define-constant VETO_WINDOW u12)
 
+;; How long anyone has to CONCLUDE a week once its veto window closes. Past
+;; this the week can only FAIL: nobody is paid, the bond is released, and the
+;; week reopens for someone to propose again.
+;;
+;; 48 blocks is roughly 1.5 to 2 hours at observed testnet block times.
+;; PRODUCTION should be far longer -- days, not hours.
+;;
+;; This is NOT what stops the pool-growth exploit; the snapshotted `draw` does
+;; that, and it does it better. An earlier version used a 12-block deadline as
+;; the only defence, which turned a slow hour into permanently unpaid work and
+;; made an always-on keeper mandatory. With the snapshot in place, this window
+;; does one narrow job: it stops a brief nobody ever concludes from sitting OPEN
+;; forever, holding its proposer's bond locked and blocking that week from ever
+;; being re-proposed.
+;;
+;; Keep it generous. A payout that was voted through should never be lost
+;; because everyone was busy.
+(define-constant CONCLUDE_WINDOW u48)
+
 (define-constant VETO_QUORUM u15) ;; % of eligible weight needed to block
 
 ;; Percentage of CAST weight that must be yes for a week to pass.
@@ -250,10 +269,11 @@
     vetoWeight: uint,
     voterCount: uint,
     status: uint,
-    ;; Why a week ended the way it did, for display only. FAILED covers three
+    ;; Why a week ended the way it did, for display only. FAILED covers five
     ;; different causes and a UI should be able to tell them apart without
     ;; replaying events.
     ;;   "" | "paid" | "voted-down" | "no-quorum" | "vetoed" | "pool-short"
+    ;;   | "not-concluded"
     reason: (string-ascii 16),
   }
 )
@@ -335,13 +355,18 @@
     minBond: MIN_BOND,
     voteWindow: VOTE_WINDOW,
     vetoWindow: VETO_WINDOW,
+    concludeWindow: CONCLUDE_WINDOW,
     proposeInterval: PROPOSE_INTERVAL,
   }
 )
 
 ;; Where a week is in its lifecycle right now, so nothing has to recompute
 ;; window arithmetic.
-;;   "none" | "voting" | "veto" | "concludable" | "passed" | "failed"
+;;   "none" | "voting" | "veto" | "concludable" | "lapsed" | "passed" | "failed"
+;;
+;; "lapsed" means the conclude window has closed but nobody has called
+;; conclude yet: the week is still OPEN on chain, and concluding it now will
+;; FAIL it rather than pay. Surface that urgently, not reassuringly.
 (define-read-only (get-phase (briefDate (string-ascii 10)))
   (match (map-get? Briefs briefDate)
     brief (if (is-eq (get status brief) STATUS_PASSED)
@@ -352,7 +377,16 @@
           "voting"
           (if (< stacks-block-height (+ (get voteEnd brief) VETO_WINDOW))
             "veto"
-            "concludable"
+            ;; "concludable" must have an upper bound. Past CONCLUDE_WINDOW the
+            ;; week can no longer pay anyone -- calling conclude then writes
+            ;; not-concluded / FAILED -- so reporting it as still concludable
+            ;; would tell correspondents to relax at the one moment waiting
+            ;; actually costs them money.
+            (if (< stacks-block-height
+                   (+ (+ (get voteEnd brief) VETO_WINDOW) CONCLUDE_WINDOW))
+              "concludable"
+              "lapsed"
+            )
           )
         )
       )
@@ -881,6 +915,10 @@
       ;; Compare the amount actually disbursed, not the draw. perSignal is
       ;; floored, so the real spend is up to totalSignals-1 sats below the draw,
       ;; and comparing the draw would fail a week the pool could in fact cover.
+      ;; Past the conclude window: the week can only fail now.
+      (lapsed (>= stacks-block-height
+        (+ (+ (get voteEnd brief) VETO_WINDOW) CONCLUDE_WINDOW)
+      ))
       (poolShort (> (* perSignal (get totalSignals brief))
         (contract-call? .news-treasury get-balance)
       ))
@@ -904,7 +942,22 @@
         u0
       ))
 
-        (if vetoed
+        (if lapsed
+      ;; FAILED because nobody concluded it in time. The bond is released and
+      ;; the week reopens, so this is recoverable: propose it again.
+      ;;
+      ;; NO COOLDOWN. Like pool-short, this is not attributable to the proposer
+      ;; -- they wrote a valid brief and someone else failed to press a button.
+      (begin
+        (map-set Briefs briefDate
+          (merge brief { status: STATUS_FAILED, reason: "not-concluded" }))
+        (print {
+          event: "conclude", briefDate: briefDate, outcome: "failed",
+          reason: "not-concluded", voteEnd: (get voteEnd brief),
+        })
+        (ok STATUS_FAILED)
+      )
+    (if vetoed
       ;; FAILED by veto. A VETO_QUORUM minority blocked a week that may well
       ;; have passed its vote.
       (begin
@@ -990,6 +1043,7 @@
         )
         )
       )
+    )
     )
     )
   )

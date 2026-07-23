@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 WEEK=${WEEK:-2026-07-20}
 A07=ST34Q5MVC410NTEK8G00G2QZ1JTBB2WJTNABTE6RA
 A08=ST1QQ1NJMM3MH73X2W2DD7K9K2G9CHW00D9FVX7PD
-A01=STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J
+A01=STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J  # proposer, earns NO fee in v2
 
 sbtc() {
   curl -s --max-time 20 "https://api.testnet.hiro.so/extended/v1/address/$1/balances" |
@@ -28,13 +28,13 @@ for i in $(seq 1 90); do
   echo "[$(date +%H:%M:%S)] $line"
   if echo "$line" | grep -q "(ready)"; then
     echo "=== window open, settling ==="
-    node scripts/flow.mjs settle 2>&1 | grep -vE "Deprecation|trace-deprecation"
+    node scripts/flow.mjs conclude 2>&1 | grep -vE "Deprecation|trace-deprecation"
     break
   fi
   sleep 60
 done
 
-echo "=== waiting for settle to confirm ==="
+echo "=== waiting for conclude to confirm ==="
 for i in $(seq 1 20); do
   st=$(node scripts/flow.mjs status 2>/dev/null | grep "status ")
   echo "[$(date +%H:%M:%S)] $st"
@@ -45,8 +45,8 @@ done
 A07n=$(sbtc $A07); A08n=$(sbtc $A08); A01n=$(sbtc $A01)
 echo
 echo "after   agent-07 $A07n  agent-08 $A08n  agent-01 $A01n"
-echo "delta   agent-07 $((A07n-B07))  (expect 83160)"
-echo "        agent-08 $((A08n-B08))  (expect 55440)"
-echo "        agent-01 $((A01n-B01))  (expect 1400, proposer fee)"
+echo "delta   agent-07 $((A07n-B07))  (expect 150000 = 30 x 5000)"
+echo "        agent-08 $((A08n-B08))  (expect 100000 = 20 x 5000)"
+echo "        agent-01 $((A01n-B01))  (expect 0, no proposer fee in v2)"
 echo
 node scripts/flow.mjs status 2>/dev/null

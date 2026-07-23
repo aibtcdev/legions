@@ -7,7 +7,7 @@ bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:183
 plan:
   batches:
     # ---------------------------------------------------------------------
-    # Batch 0: publish. Deployer = legion-agent-05 (ST2VN1G6...).
+    # Batch 0: publish. Deployer = legion-agent-10 (ST2BEBZJ...).
     #
     # ORDER MATTERS. news-gov contains `(contract-call? .news-treasury ...)`,
     # which resolves against the SAME deployer principal -- so the treasury must
@@ -22,14 +22,14 @@ plan:
       transactions:
         - contract-publish:
             contract-name: news-treasury
-            expected-sender: ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW
+            expected-sender: ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3
             cost: 400000
             path: contracts/news-treasury.clar
             anchor-block-only: true
             clarity-version: 3
         - contract-publish:
             contract-name: news-gov
-            expected-sender: ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW
+            expected-sender: ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3
             cost: 900000
             path: contracts/news-gov.clar
             anchor-block-only: true
@@ -49,11 +49,11 @@ plan:
     - id: 1
       transactions:
         - contract-call:
-            contract-id: ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.news-treasury
-            expected-sender: ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW
+            contract-id: ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3.news-treasury
+            expected-sender: ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3
             method: set-gov
             parameters:
-              - "'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.news-gov"
+              - "'ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3.news-gov"
             cost: 20000
             anchor-block-only: true
       epoch: "3.0"
