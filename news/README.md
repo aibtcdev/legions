@@ -116,6 +116,7 @@ votes on a parameter; the only vote is yes/no on a week.
 | `MIN_STAKE` | 10,000 sats | membership floor |
 | `DRAW_BPS` | 50 (0.5%) | of Pool, per approved week |
 | `BOND_BPS` | 1,000 (10%) | of the pending draw |
+| `MIN_BOND` | 10,000 sats | absolute floor under the bond |
 | `PROPOSER_FEE_BPS` | 100 (1%) | of the draw, on success only |
 | entry cap | 30 | enforced by the `(list 30 …)` type |
 
@@ -132,6 +133,25 @@ spends a slice of everyone else's pool. See the `quorum is load-bearing` test.
 
 Slashing a proposer because *other people* failed to show up would end
 proposing within a week. Apathy costs a delay, never a bond.
+
+After either failure the proposer sits out one `VOTE_WINDOW` before they may
+propose again — **anything**, not just the week that failed.
+
+That cooldown closes a free denial-of-service. Returning the bond in full on
+EXPIRED is the right call for honest proposers, but combined with "one live
+proposal per week" and an unrestricted reopen it let a single `MIN_STAKE`
+holder propose garbage, watch it expire, take the bond back, and immediately
+re-propose — forever, at zero cost, blocking the legitimate proposer from ever
+taking the slot. It worked best when turnout was low, which is exactly when the
+legion is most fragile.
+
+The bar is on the **principal, not the week**: anyone else may propose the
+reopened week in the very next block, so an honest failure costs the newsroom
+nothing, while sustaining the attack now costs `MIN_STAKE` per account per
+cycle. `MIN_BOND` backs this up — the percentage bond works out to
+pool / 200,000, which is 500 sats at a 0.01 BTC pool and no deterrent at all.
+Both are covered by the `a single member cannot hold a week hostage` and
+`bond floor protects a small pool` suites.
 
 ## Economics
 
@@ -193,7 +213,7 @@ in the suite.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 41 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 49 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via

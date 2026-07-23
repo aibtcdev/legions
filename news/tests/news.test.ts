@@ -39,7 +39,8 @@ const POOL = 100_000_000;
 const STAKE = 10_000_000;
 const DRAW = 500_000;
 const FEE = 5_000;
-const BOND = 50_000; // 10% of the draw
+const BOND = 50_000; // 10% of the draw (above the MIN_BOND floor)
+const MIN_BOND = 10_000; // absolute floor under the bond
 const SIGNALS_A = 49;
 const SIGNALS_B = 35;
 const PER_SIGNAL = 5_892;
@@ -420,10 +421,15 @@ describe("settle -- rejected on merit", () => {
     expect(stakedOf()).toBe(BigInt(3 * STAKE - BOND));
   });
 
-  it("reopens the week for a corrected proposal", () => {
+  it("reopens the week for a corrected proposal by someone else", () => {
     expect(settle().result).toBeOk(Cl.uint(2));
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(propose(voter1).result).toBeOk(Cl.stringAscii(WEEK));
     expect(briefStatus()).toBe(0n); // STATUS_OPEN
+  });
+
+  it("bars the rejected proposer from immediately re-proposing", () => {
+    expect(settle().result).toBeOk(Cl.uint(2));
+    expect(propose().result).toBeErr(Cl.uint(422));
   });
 });
 
@@ -449,9 +455,9 @@ describe("settle -- expired on apathy", () => {
     expect(poolOf()).toBe(BigInt(POOL));
   });
 
-  it("reopens the week", () => {
+  it("reopens the week for anyone other than the failed proposer", () => {
     expect(settle().result).toBeOk(Cl.uint(3));
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(propose(voter1).result).toBeOk(Cl.stringAscii(WEEK));
   });
 });
 
@@ -493,6 +499,71 @@ describe("fee ref cannot collide with a payout ref", () => {
     expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
     closeWindow();
     expect(settle().result).toBeOk(Cl.uint(1)); // settles, does not revert
+  });
+});
+
+describe("a single member cannot hold a week hostage", () => {
+  // Regression: EXPIRED returns the bond in full (so apathy never costs an
+  // honest proposer), and a failed week reopens. Together those let one
+  // MIN_STAKE holder propose garbage, let it expire, get the bond back, and
+  // re-propose forever -- blocking the real proposer at zero cost, and working
+  // best exactly when turnout is low. The cooldown is on the principal, not the
+  // slot, so honest failures cost the newsroom nothing.
+  beforeEach(() => {
+    wire();
+    fundPool();
+    stake(proposer);
+    stake(voter1);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    closeWindow(); // nobody votes
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED
+  });
+
+  it("blocks the failed proposer from re-proposing the same week", () => {
+    expect(propose().result).toBeErr(Cl.uint(422));
+  });
+
+  it("blocks them from any other week too, not just the one that failed", () => {
+    expect(propose(proposer, "2026-07-27").result).toBeErr(Cl.uint(422));
+  });
+
+  it("lets a different member take the reopened week in the next block", () => {
+    expect(propose(voter1).result).toBeOk(Cl.stringAscii(WEEK));
+  });
+
+  it("lets the original proposer back in once the cooldown elapses", () => {
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+  });
+
+  it("reports the cooldown height", () => {
+    const r = simnet.callReadOnlyFn(
+      GOV,
+      "get-propose-cooldown",
+      [Cl.principal(proposer)],
+      deployer,
+    );
+    expect((r.result as any).value).toBeGreaterThan(0n);
+  });
+});
+
+describe("bond floor protects a small pool", () => {
+  // The percentage bond is pool/200,000 -- 500 sats at 0.01 BTC, which is no
+  // deterrent at all. The floor makes proposing cost a real stake from day one.
+  it("charges MIN_BOND when the percentage bond would be dust", () => {
+    wire();
+    fundPool(1_000_000); // draw 5,000 -> percentage bond would be 500
+    stake(proposer);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(lockedOf(proposer)).toBe(BigInt(MIN_BOND));
+  });
+
+  it("still uses the percentage bond once the pool is large enough", () => {
+    wire();
+    fundPool(); // 1 BTC -> bond 50,000, well above the floor
+    stake(proposer);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(lockedOf(proposer)).toBe(BigInt(BOND));
   });
 });
 

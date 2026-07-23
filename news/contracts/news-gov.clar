@@ -76,6 +76,12 @@
 ;; it stays meaningful as TVL grows and never needs a governance vote.
 (define-constant BOND_BPS u1000)
 
+;; Absolute floor under the bond. The percentage bond works out to pool/200000,
+;; which is economically nothing while the pool is small -- 500 sats at 0.01 BTC
+;; -- exactly when the legion is least able to absorb spam. The floor makes
+;; proposing cost a real membership stake from day one.
+(define-constant MIN_BOND u10000)
+
 ;; Paid to the proposer out of the draw, on success only. Assembling and
 ;; verifying an entry list is real work that nobody is otherwise paid for.
 ;; There is deliberately no settler fee: every recipient in a passed brief
@@ -111,6 +117,7 @@
 (define-constant ERR_DUST_DRAW (err u419)) ;; per-entry share would round to zero
 (define-constant ERR_BAD_DATE (err u420)) ;; brief-date must be exactly YYYY-MM-DD
 (define-constant ERR_BAD_INSCRIPTION (err u421)) ;; inscription id must be non-empty
+(define-constant ERR_PROPOSE_COOLDOWN (err u422)) ;; proposer barred after a failed brief
 (define-constant ERR_SELF_VOTE (err u423)) ;; proposer voting on own brief
 
 ;; -------------------------------------------------------------------
@@ -132,6 +139,26 @@
 ;; Earliest burn height at which a principal may unstake. Set on propose and on
 ;; vote to that brief's voteEnd, kept monotonic. Blocks vote-then-flee.
 (define-map UnlockAt
+  principal
+  uint
+)
+
+;; Earliest burn height at which a principal may propose again, set whenever a
+;; brief they proposed fails (EXPIRED or REJECTED).
+;;
+;; This closes a free denial-of-service. Returning the bond in full on EXPIRED
+;; protects honest proposers from other people's apathy -- but combined with
+;; "one live proposal per week" and an unrestricted reopen, it let a single
+;; MIN_STAKE holder propose garbage, watch it expire, get the bond back, and
+;; immediately re-propose. Forever, at zero cost, blocking the legitimate
+;; proposer from ever taking the slot. It worked best when turnout was low,
+;; which is precisely when the legion is most fragile.
+;;
+;; The cooldown is on the PROPOSER, not the week: anyone else may propose the
+;; reopened week in the very next block, so an honest failure costs the newsroom
+;; nothing, while sustaining the attack now costs MIN_STAKE per account per
+;; cycle instead of nothing.
+(define-map ProposeCooldownUntil
   principal
   uint
 )
@@ -202,6 +229,11 @@
 
 (define-read-only (get-unlock-at (who principal))
   (default-to u0 (map-get? UnlockAt who))
+)
+
+;; Earliest burn height at which `who` may propose again (u0 = no cooldown).
+(define-read-only (get-propose-cooldown (who principal))
+  (default-to u0 (map-get? ProposeCooldownUntil who))
 )
 
 ;; Stake not earmarked by an open proposal bond.
@@ -444,7 +476,11 @@
       (existing (map-get? Briefs briefDate))
       (pool (contract-call? .news-treasury get-pool))
       (draw (/ (* pool DRAW_BPS) u10000))
-      (bond (/ (* draw BOND_BPS) u10000))
+      (rawBond (/ (* draw BOND_BPS) u10000))
+      (bond (if (> rawBond MIN_BOND)
+        rawBond
+        MIN_BOND
+      ))
       (proposerStake (get-stake tx-sender))
       (alreadyLocked (locked-of tx-sender))
       (snapshot (var-get TotalStaked))
@@ -480,6 +516,12 @@
     (asserts! (> (len entries) u0) ERR_EMPTY_ENTRIES)
     (asserts! (get ok entryCheck) ERR_BAD_ENTRIES)
     (asserts! (> pool u0) ERR_EMPTY_POOL)
+    ;; A proposer whose last brief failed sits out one window. Anyone else may
+    ;; take this week immediately -- the bar is on the principal, not the slot.
+    (asserts!
+      (>= burn-block-height (get-propose-cooldown tx-sender))
+      ERR_PROPOSE_COOLDOWN
+    )
     ;; Only a member may propose, and their free stake must cover the bond.
     (asserts! (>= proposerStake MIN_STAKE) ERR_INELIGIBLE)
     (asserts! (>= proposerStake (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
@@ -630,11 +672,13 @@
       ;; EXPIRED -- nobody showed up. The proposer did nothing wrong, so the
       ;; bond is returned in full and the date reopens.
       (begin
+        (map-set ProposeCooldownUntil proposer (+ burn-block-height VOTE_WINDOW))
         (map-set Briefs briefDate (merge brief { status: STATUS_EXPIRED }))
         (print {
           event: "settle",
           briefDate: briefDate,
           outcome: "expired",
+          cooldownUntil: (+ burn-block-height VOTE_WINDOW),
           cast: cast,
           eligible: eligible,
           voterCount: (get voterCount brief),
@@ -657,11 +701,13 @@
               u0
             ))
           (and (> bond u0) (unwrap! (contract-call? .news-treasury slash bond) ERR_PAYOUT_FAILED))
+          (map-set ProposeCooldownUntil proposer (+ burn-block-height VOTE_WINDOW))
           (map-set Briefs briefDate (merge brief { status: STATUS_REJECTED }))
           (print {
             event: "settle",
             briefDate: briefDate,
             outcome: "rejected",
+            cooldownUntil: (+ burn-block-height VOTE_WINDOW),
             yesWeight: (get yesWeight brief),
             noWeight: (get noWeight brief),
             bondSlashed: bond,
