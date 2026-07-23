@@ -7,8 +7,8 @@ const deployer = accounts.get("deployer")!;
 const proposer = accounts.get("wallet_1")!;
 const voter1 = accounts.get("wallet_2")!;
 const voter2 = accounts.get("wallet_3")!;
-const corrA = accounts.get("wallet_4")!; // correspondent A -- 49 signals this week
-const corrB = accounts.get("wallet_5")!; // correspondent B -- 35 signals this week
+const corrA = accounts.get("wallet_4")!; // correspondent A, 49 signals this week
+const corrB = accounts.get("wallet_5")!; // correspondent B, 35 signals this week
 const outsider = accounts.get("wallet_6")!;
 
 const TREASURY = "news-treasury";
@@ -20,34 +20,31 @@ const govPrincipal = `${deployer}.${GOV}`;
 const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
 
 // Must match news-gov.clar.
-const VOTE_WINDOW = 144; // TEST TIMING: stacks blocks, ~1h on testnet
-const VETO_WINDOW = 48; // objection window after voting closes
-const EXIT_FEE_BPS = 1000; // 10% skimmed from stake on the way out
-const MIN_STAKE = 10_000;
+const VOTE_WINDOW = 144; // TEST TIMING: stacks blocks
+const VETO_WINDOW = 48;
+const MIN_WEIGHT = 10_000;
 
-// The week's first brief date. Keyed per week, not per day.
 const WEEK = "2026-07-20";
 const INSCRIPTIONS = [
   Uint8Array.from([0x33, 0xed, 0xd6, 0x3e]),
   Uint8Array.from([0x44, 0xfe, 0xe7, 0x4f]),
 ];
 
-// Arithmetic the worked example in the README depends on:
-//   draw          = 0.5% of 100,000,000 = 500,000
-//   proposer fee  = 1%   of 500,000     =   5,000
-//   distributable =                       495,000
-//   per signal    = 495,000 / 84        =   5,892  (remainder 72 stays in Pool)
-const POOL = 100_000_000;
-const STAKE = 10_000_000;
-const DRAW = 500_000;
-const FEE = 5_000;
-const BOND = 50_000; // 10% of the draw (above the MIN_BOND floor)
-const MIN_BOND = 10_000; // absolute floor under the bond
+// Three equal contributors, so pool == total weight == 30,000,000.
+//   draw       = 0.5% of 30,000,000 = 150,000
+//   fee        = 1%   of 150,000    =   1,500
+//   perSignal  = 148,500 / 84       =   1,767  (remainder stays in the pool)
+//   bond       = max(10,000, 30,000,000 * 5bps = 15,000) = 15,000
+const CONTRIB = 10_000_000;
+const POOL = 3 * CONTRIB;
+const DRAW = 150_000;
+const FEE = 1_500;
+const BOND = 15_000;
 const SIGNALS_A = 49;
 const SIGNALS_B = 35;
-const PER_SIGNAL = 5_892;
-const PAY_A = SIGNALS_A * PER_SIGNAL; // 288,708
-const PAY_B = SIGNALS_B * PER_SIGNAL; // 206,220
+const PER_SIGNAL = 1_767;
+const PAY_A = SIGNALS_A * PER_SIGNAL;
+const PAY_B = SIGNALS_B * PER_SIGNAL;
 
 // ---- helpers -------------------------------------------------------
 
@@ -63,16 +60,18 @@ function sbtcOf(who: string): bigint {
 }
 
 function poolOf(): bigint {
-  return (simnet.callReadOnlyFn(TREASURY, "get-pool", [], deployer).result as any).value as bigint;
+  return (simnet.callReadOnlyFn(TREASURY, "get-balance", [], deployer).result as any)
+    .value as bigint;
 }
 
-function stakedOf(): bigint {
-  return (simnet.callReadOnlyFn(TREASURY, "get-staked", [], deployer).result as any).value as bigint;
-}
-
-function stakeOf(who: string): bigint {
-  const r = simnet.callReadOnlyFn(GOV, "get-stake", [Cl.principal(who)], deployer);
+function weightOf(who: string): bigint {
+  const r = simnet.callReadOnlyFn(GOV, "get-weight", [Cl.principal(who)], deployer);
   return (r.result as any).value as bigint;
+}
+
+function totalWeight(): bigint {
+  return (simnet.callReadOnlyFn(GOV, "get-total-weight", [], deployer).result as any)
+    .value as bigint;
 }
 
 function lockedOf(who: string): bigint {
@@ -80,7 +79,13 @@ function lockedOf(who: string): bigint {
   return (r.result as any).value as bigint;
 }
 
-/** One entry per correspondent: how many of their signals landed this week. */
+/** Send sBTC to the pool and receive voting weight. The only way in. */
+function contribute(who: string, amount = CONTRIB) {
+  faucet(who);
+  const r = simnet.callPublicFn(GOV, "contribute", [Cl.uint(amount)], who);
+  return (r.result as any).value.value as bigint;
+}
+
 function entries(
   rows: Array<[string, number]> = [
     [corrA, SIGNALS_A],
@@ -104,24 +109,16 @@ function wire() {
   ).toBeOk(Cl.bool(true));
 }
 
-function fundPool(amount = POOL) {
-  faucet(deployer);
-  expect(simnet.callPublicFn(TREASURY, "deposit", [Cl.uint(amount)], deployer).result).toBeOk(
-    Cl.bool(true),
-  );
-}
-
-function stake(who: string, amount = STAKE) {
-  faucet(who);
-  expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(amount)], who).result).toBeOk(Cl.uint(amount));
-}
-
 function propose(who = proposer, week = WEEK, list = entries(), ins = inscriptions()) {
   return simnet.callPublicFn(GOV, "propose-brief", [Cl.stringAscii(week), ins, list], who);
 }
 
 function vote(who: string, support: boolean, week = WEEK) {
   return simnet.callPublicFn(GOV, "vote", [Cl.stringAscii(week), Cl.bool(support)], who);
+}
+
+function veto(who: string, week = WEEK) {
+  return simnet.callPublicFn(GOV, "veto", [Cl.stringAscii(week)], who);
 }
 
 function settle(week = WEEK, who = outsider) {
@@ -138,18 +135,22 @@ function closeVoting() {
   simnet.mineEmptyBlocks(VOTE_WINDOW + 1);
 }
 
-/** Past vetoEnd -- settle is now allowed. */
+/** Past vetoEnd, settle is now allowed. */
 function closeWindow() {
   simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + 1);
 }
 
-function veto(who: string, week = WEEK) {
-  return simnet.callPublicFn(GOV, "veto", [Cl.stringAscii(week)], who);
+/** The standard three-contributor setup. */
+function fundedLegion() {
+  wire();
+  contribute(proposer);
+  contribute(voter1);
+  contribute(voter2);
 }
 
 // ---- tests ---------------------------------------------------------
 
-describe("wiring and funding", () => {
+describe("wiring", () => {
   it("wires gov once, and refuses a second wiring", () => {
     wire();
     expect(
@@ -163,24 +164,8 @@ describe("wiring and funding", () => {
     ).toBeErr(Cl.uint(401));
   });
 
-  it("anyone may deposit, and deposits land in Pool, not Staked", () => {
-    wire();
-    fundPool();
-    expect(poolOf()).toBe(BigInt(POOL));
-    expect(stakedOf()).toBe(0n);
-  });
-
-  it("keeps stake out of the pool", () => {
-    wire();
-    fundPool();
-    stake(proposer);
-    expect(poolOf()).toBe(BigInt(POOL));
-    expect(stakedOf()).toBe(BigInt(STAKE));
-  });
-
   it("refuses a payout from anyone but gov", () => {
-    wire();
-    fundPool();
+    fundedLegion();
     const r = simnet.callPublicFn(
       TREASURY,
       "execute-payout",
@@ -190,98 +175,103 @@ describe("wiring and funding", () => {
     expect(r.result).toBeErr(Cl.uint(401));
   });
 
-  it("refuses an unstake from anyone but gov", () => {
+  it("refuses a direct contribution that would bypass weight minting", () => {
+    // contribute-in is gov-only. A direct path would let someone fund the pool
+    // without receiving the say that funding is supposed to buy.
     wire();
-    fundPool();
-    const r = simnet.callPublicFn(
-      TREASURY,
-      "execute-unstake",
-      [Cl.principal(outsider), Cl.uint(1000)],
-      outsider,
-    );
-    expect(r.result).toBeErr(Cl.uint(401));
+    faucet(outsider);
+    expect(
+      simnet.callPublicFn(TREASURY, "contribute-in", [Cl.uint(1000)], outsider).result,
+    ).toBeErr(Cl.uint(401));
   });
 });
 
-describe("staking", () => {
-  beforeEach(() => {
-    wire();
-    fundPool();
+describe("contribute: money in, weight out", () => {
+  beforeEach(() => wire());
+
+  it("gives the first contributor weight equal to their contribution", () => {
+    contribute(proposer, 10_000_000);
+    expect(weightOf(proposer)).toBe(10_000_000n);
+    expect(poolOf()).toBe(10_000_000n);
+    expect(totalWeight()).toBe(10_000_000n);
   });
 
-  it("enforces the membership floor", () => {
-    faucet(proposer);
-    expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(MIN_STAKE - 1)], proposer).result).toBeErr(
-      Cl.uint(414),
+  it("splits weight in proportion to what each contributor put in", () => {
+    contribute(proposer, 10_000);
+    contribute(voter1, 30_000);
+    expect(weightOf(proposer)).toBe(10_000n); // 25%
+    expect(weightOf(voter1)).toBe(30_000n); // 75%
+    expect(totalWeight()).toBe(40_000n);
+  });
+
+  it("keeps one pool, so every sat in is spendable on journalism", () => {
+    contribute(proposer);
+    contribute(voter1);
+    // No second balance: the pool IS the contributions.
+    expect(poolOf()).toBe(BigInt(2 * CONTRIB));
+    expect(totalWeight()).toBe(poolOf());
+  });
+
+  it("refuses a zero contribution", () => {
+    faucet(outsider);
+    expect(simnet.callPublicFn(GOV, "contribute", [Cl.uint(0)], outsider).result).toBeErr(
+      Cl.uint(409),
     );
   });
 
-  it("charges the exit fee on unstake and hands it to the pool", () => {
-    stake(proposer);
-    const before = sbtcOf(proposer);
-    const poolBefore = poolOf();
-    const fee = (STAKE * EXIT_FEE_BPS) / 10000;
-
-    expect(simnet.callPublicFn(GOV, "unstake", [Cl.uint(STAKE)], proposer).result).toBeOk(
-      Cl.uint(0),
-    );
-
-    // Member gets 90% back; the 10% stays behind, reclassified into the Pool.
-    expect(sbtcOf(proposer)).toBe(before + BigInt(STAKE - fee));
-    expect(poolOf()).toBe(poolBefore + BigInt(fee));
-    expect(stakedOf()).toBe(0n);
+  it("quotes the weight a contribution would buy", () => {
+    contribute(proposer, 10_000_000);
+    const q = simnet.callReadOnlyFn(GOV, "quote-weight", [Cl.uint(5_000_000)], deployer);
+    expect((q.result as any).value).toBe(5_000_000n);
   });
+});
 
-  it("makes renting weight for one vote cost the exit fee", () => {
-    // Stake, vote, leave -- the round trip is not free.
-    stake(proposer);
-    stake(voter1);
+describe("share-of-balance: contributions are measured against the live pool", () => {
+  it("gives a post-payout contributor credit for the money actually there", () => {
+    fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
     closeWindow();
-    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED, one voter
+    expect(settle().result).toBeOk(Cl.uint(1));
 
-    const before = sbtcOf(voter1);
-    expect(simnet.callPublicFn(GOV, "unstake", [Cl.uint(STAKE)], voter1).result).toBeOk(
-      Cl.uint(0),
-    );
-    expect(sbtcOf(voter1)).toBe(before + BigInt(STAKE - (STAKE * EXIT_FEE_BPS) / 10000));
-  });
+    const poolAfter = poolOf(); // drawn down
+    const weightBefore = totalWeight(); // unchanged
+    expect(poolAfter).toBeLessThan(weightBefore);
 
-  it("blocks unstaking while a week the member voted on is open", () => {
-    stake(proposer);
-    stake(voter1);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
-    expect(simnet.callPublicFn(GOV, "unstake", [Cl.uint(STAKE)], voter1).result).toBeErr(
-      Cl.uint(415),
-    );
-  });
+    // Contribute an amount equal to the whole remaining pool: that funds half
+    // of what is now in it, so it should buy half the total weight.
+    faucet(outsider);
+    simnet.callPublicFn(GOV, "contribute", [Cl.uint(Number(poolAfter))], outsider);
 
-  it("keeps a proposer's bond unwithdrawable while the vote is live", () => {
-    stake(proposer);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    closeWindow(); // lock expires, but the bond is still earmarked
-    const free = simnet.callReadOnlyFn(GOV, "get-free-stake", [Cl.principal(proposer)], deployer);
-    expect((free.result as any).value).toBe(BigInt(STAKE - BOND));
+    expect(weightOf(outsider)).toBe(weightBefore);
+    expect(totalWeight()).toBe(weightBefore * 2n);
+
+    // Cumulative weighting would have credited only ~poolAfter against a larger
+    // total, crediting sats that had already been spent.
   });
 });
 
 describe("propose-brief", () => {
   beforeEach(() => {
     wire();
-    fundPool();
-    stake(proposer);
+    contribute(proposer);
   });
 
-  it("locks a bond of 10% of the pending draw", () => {
+  it("falls back to the bond floor while total weight is small", () => {
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    // 10,000,000 * 5bps = 5,000, below the MIN_BOND floor of 10,000.
+    expect(lockedOf(proposer)).toBe(BigInt(MIN_WEIGHT));
+  });
+
+  it("uses the percentage bond once total weight is large enough", () => {
+    contribute(voter1);
+    contribute(voter2);
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(lockedOf(proposer)).toBe(BigInt(BOND));
   });
 
   it("rejects a duplicate correspondent", () => {
-    // Two entries for the same principal would collide on payout-ref and revert
-    // the whole settlement, so they are refused at propose time.
     const dupes = entries([
       [corrA, 10],
       [corrA, 5],
@@ -293,45 +283,30 @@ describe("propose-brief", () => {
     expect(propose(proposer, WEEK, entries([[corrA, 0]])).result).toBeErr(Cl.uint(412));
   });
 
-  it("rejects a malformed week date", () => {
+  it("rejects a malformed week", () => {
     expect(propose(proposer, "2026-7-1").result).toBeErr(Cl.uint(420));
-  });
-
-  it("rejects a correctly-sized date with separators in the wrong place", () => {
     expect(propose(proposer, "20-07-2026").result).toBeErr(Cl.uint(420));
   });
 
-  it("rejects an empty entry list", () => {
+  it("rejects empty entries and empty inscriptions", () => {
     expect(propose(proposer, WEEK, Cl.list([])).result).toBeErr(Cl.uint(411));
-  });
-
-  it("rejects an empty inscription list", () => {
     expect(propose(proposer, WEEK, entries(), Cl.list([])).result).toBeErr(Cl.uint(421));
   });
 
-  it("refuses a non-member", () => {
+  it("refuses a non-contributor", () => {
     expect(propose(outsider).result).toBeErr(Cl.uint(401));
   });
 
   it("allows only one live proposal per week", () => {
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    stake(voter1);
+    contribute(voter1);
     expect(propose(voter1).result).toBeErr(Cl.uint(403));
-  });
-
-  it("stores a digest over the entries", () => {
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    const d = simnet.callReadOnlyFn(GOV, "get-entry-digest", [Cl.stringAscii(WEEK)], deployer);
-    expect((d.result as any).value).toBeDefined();
   });
 });
 
 describe("voting", () => {
   beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
+    fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
   });
 
@@ -340,7 +315,7 @@ describe("voting", () => {
   });
 
   it("refuses a correspondent named in the week", () => {
-    stake(corrA);
+    contribute(corrA);
     expect(vote(corrA, true).result).toBeErr(Cl.uint(406));
   });
 
@@ -349,23 +324,27 @@ describe("voting", () => {
     expect(vote(voter1, false).result).toBeErr(Cl.uint(405));
   });
 
+  it("refuses a voter below the weight floor", () => {
+    faucet(outsider);
+    simnet.callPublicFn(GOV, "contribute", [Cl.uint(100)], outsider);
+    expect(vote(outsider, true).result).toBeErr(Cl.uint(401));
+  });
+
   it("refuses votes after the window closes", () => {
-    closeWindow();
+    closeVoting();
     expect(vote(voter1, true).result).toBeErr(Cl.uint(407));
   });
 
-  it("refuses settle before the window closes", () => {
+  it("refuses settle before the veto window closes", () => {
+    expect(settle().result).toBeErr(Cl.uint(408));
+    closeVoting();
     expect(settle().result).toBeErr(Cl.uint(408));
   });
 });
 
-describe("settle -- passed", () => {
+describe("settle: passed", () => {
   beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
-    stake(voter2);
+    fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
@@ -377,7 +356,7 @@ describe("settle -- passed", () => {
     const bBefore = sbtcOf(corrB);
     const pBefore = sbtcOf(proposer);
 
-    expect(settle().result).toBeOk(Cl.uint(1)); // STATUS_SETTLED
+    expect(settle().result).toBeOk(Cl.uint(1)); // SETTLED
 
     expect(sbtcOf(corrA)).toBe(aBefore + BigInt(PAY_A));
     expect(sbtcOf(corrB)).toBe(bBefore + BigInt(PAY_B));
@@ -389,16 +368,16 @@ describe("settle -- passed", () => {
     expect(BigInt(PAY_A) / BigInt(SIGNALS_A)).toBe(BigInt(PAY_B) / BigInt(SIGNALS_B));
   });
 
-  it("draws no more than 0.5% of the pool, keeping the rounding remainder", () => {
+  it("draws no more than 0.5% of the pool", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
-    // 84 * 5,892 + 5,000 fee = 499,928 -- 72 sats of rounding stay in the pool.
     expect(poolOf()).toBe(BigInt(POOL - PAY_A - PAY_B - FEE));
     expect(BigInt(POOL) - poolOf()).toBeLessThanOrEqual(BigInt(DRAW));
   });
 
-  it("never touches staked collateral", () => {
+  it("does not change anyone's voting weight", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
-    expect(stakedOf()).toBe(BigInt(3 * STAKE));
+    expect(totalWeight()).toBe(BigInt(POOL));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
   });
 
   it("marks each correspondent's payout ref as paid", () => {
@@ -418,25 +397,21 @@ describe("settle -- passed", () => {
   it("releases the proposer's bond", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
     expect(lockedOf(proposer)).toBe(0n);
-    expect(stakeOf(proposer)).toBe(BigInt(STAKE));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
   });
 
-  it("is terminal -- the week can never be settled or proposed again", () => {
+  it("is terminal", () => {
     expect(settle().result).toBeOk(Cl.uint(1));
     expect(settle().result).toBeErr(Cl.uint(410));
     expect(propose().result).toBeErr(Cl.uint(410));
   });
 });
 
-describe("settle -- rejected on merit", () => {
+describe("settle: rejected on merit", () => {
   beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
-    stake(voter2);
+    fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    // 50% yes -- quorum met, threshold (66%) missed.
+    // 50% yes: quorum met, threshold (66%) missed.
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, false).result).toBeOk(Cl.bool(true));
     closeWindow();
@@ -444,21 +419,22 @@ describe("settle -- rejected on merit", () => {
 
   it("pays nobody", () => {
     const aBefore = sbtcOf(corrA);
-    expect(settle().result).toBeOk(Cl.uint(2)); // STATUS_REJECTED
+    expect(settle().result).toBeOk(Cl.uint(2)); // REJECTED
     expect(sbtcOf(corrA)).toBe(aBefore);
   });
 
-  it("slashes the bond from stake into the pool", () => {
+  it("burns the proposer's bond, costing them say rather than sats", () => {
     expect(settle().result).toBeOk(Cl.uint(2));
-    expect(stakeOf(proposer)).toBe(BigInt(STAKE - BOND));
-    expect(poolOf()).toBe(BigInt(POOL + BOND));
-    expect(stakedOf()).toBe(BigInt(3 * STAKE - BOND));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB - BOND));
+    expect(totalWeight()).toBe(BigInt(POOL - BOND));
+    // The sats never moved: there is nowhere for them to go.
+    expect(poolOf()).toBe(BigInt(POOL));
   });
 
-  it("reopens the week for a corrected proposal by someone else", () => {
+  it("reopens the week for someone else", () => {
     expect(settle().result).toBeOk(Cl.uint(2));
     expect(propose(voter1).result).toBeOk(Cl.stringAscii(WEEK));
-    expect(briefStatus()).toBe(0n); // STATUS_OPEN
+    expect(briefStatus()).toBe(0n);
   });
 
   it("bars the rejected proposer from immediately re-proposing", () => {
@@ -467,20 +443,16 @@ describe("settle -- rejected on merit", () => {
   });
 });
 
-describe("settle -- expired on apathy", () => {
+describe("settle: expired on apathy", () => {
   beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
+    fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    // Nobody votes.
-    closeWindow();
+    closeWindow(); // nobody votes
   });
 
-  it("returns the bond in full -- the proposer did nothing wrong", () => {
-    expect(settle().result).toBeOk(Cl.uint(3)); // STATUS_EXPIRED
-    expect(stakeOf(proposer)).toBe(BigInt(STAKE));
+  it("returns the bond in full, since the proposer did nothing wrong", () => {
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
     expect(lockedOf(proposer)).toBe(0n);
   });
 
@@ -489,25 +461,88 @@ describe("settle -- expired on apathy", () => {
     expect(poolOf()).toBe(BigInt(POOL));
   });
 
-  it("reopens the week for anyone other than the failed proposer", () => {
+  it("lets a different contributor take the reopened week immediately", () => {
     expect(settle().result).toBeOk(Cl.uint(3));
     expect(propose(voter1).result).toBeOk(Cl.stringAscii(WEEK));
+  });
+
+  it("blocks the failed proposer from any week until the cooldown elapses", () => {
+    expect(settle().result).toBeOk(Cl.uint(3));
+    expect(propose(proposer, "2026-07-27").result).toBeErr(Cl.uint(422));
+    simnet.mineEmptyBlocks(VOTE_WINDOW + 1);
+    expect(propose(proposer, "2026-07-27").result).toBeOk(Cl.stringAscii("2026-07-27"));
+  });
+});
+
+describe("veto blocks a week that would otherwise pass", () => {
+  beforeEach(() => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
+    closeVoting();
+  });
+
+  it("refuses a veto before voting closes", () => {
+    expect(propose(voter1, "2026-07-27").result).toBeOk(Cl.stringAscii("2026-07-27"));
+    expect(veto(voter2, "2026-07-27").result).toBeErr(Cl.uint(424));
+  });
+
+  it("refuses a second veto from the same principal", () => {
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    expect(veto(voter1).result).toBeErr(Cl.uint(425));
+  });
+
+  it("blocks the week when objections reach the veto quorum", () => {
+    // voter1 holds 10M of a 20M eligible base = 50%, past the 15% needed.
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+
+    const aBefore = sbtcOf(corrA);
+    expect(settle().result).toBeOk(Cl.uint(4)); // VETOED
+    expect(sbtcOf(corrA)).toBe(aBefore);
+    expect(poolOf()).toBe(BigInt(POOL));
+  });
+
+  it("returns the proposer's bond, since they cleared the bar they were set", () => {
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+    expect(settle().result).toBeOk(Cl.uint(4));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(lockedOf(proposer)).toBe(0n);
+  });
+
+  it("still settles when objections fall short of the quorum", () => {
+    faucet(outsider);
+    simnet.callPublicFn(GOV, "contribute", [Cl.uint(1_000_000)], outsider);
+    expect(veto(outsider).result).toBeOk(Cl.bool(true)); // 1M of 20M eligible = 5%
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+
+    const aBefore = sbtcOf(corrA);
+    expect(settle().result).toBeOk(Cl.uint(1)); // SETTLED
+    expect(sbtcOf(corrA)).toBeGreaterThan(aBefore);
+  });
+});
+
+describe("quorum is load-bearing", () => {
+  it("a lone minimum-weight contributor cannot approve a week alone", () => {
+    wire();
+    contribute(proposer);
+    faucet(voter1);
+    simnet.callPublicFn(GOV, "contribute", [Cl.uint(MIN_WEIGHT)], voter1);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    closeWindow();
+
+    const aBefore = sbtcOf(corrA);
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED, not SETTLED
+    expect(sbtcOf(corrA)).toBe(aBefore);
   });
 });
 
 describe("fee ref cannot collide with a payout ref", () => {
-  // The fee hashes {f,r}; an entry payout hashes {d,r}. Consensus serialization
-  // encodes tuple field names, so the shapes can never produce equal bytes --
-  // even when the proposer is also a correspondent in their own week.
-  beforeEach(() => {
+  it("produces different refs for the same week and principal", () => {
     wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
-    stake(voter2);
-  });
-
-  it("produces different refs for the same (week, principal)", () => {
     const payout = simnet.callReadOnlyFn(
       GOV,
       "payout-ref",
@@ -524,169 +559,15 @@ describe("fee ref cannot collide with a payout ref", () => {
   });
 
   it("settles a week in which the proposer is also a paid correspondent", () => {
-    const hostile = entries([
+    fundedLegion();
+    const both = entries([
       [proposer, 10],
       [corrA, 10],
     ]);
-    expect(propose(proposer, WEEK, hostile).result).toBeOk(Cl.stringAscii(WEEK));
+    expect(propose(proposer, WEEK, both).result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
     closeWindow();
-    expect(settle().result).toBeOk(Cl.uint(1)); // settles, does not revert
-  });
-});
-
-describe("a single member cannot hold a week hostage", () => {
-  // Regression: EXPIRED returns the bond in full (so apathy never costs an
-  // honest proposer), and a failed week reopens. Together those let one
-  // MIN_STAKE holder propose garbage, let it expire, get the bond back, and
-  // re-propose forever -- blocking the real proposer at zero cost, and working
-  // best exactly when turnout is low. The cooldown is on the principal, not the
-  // slot, so honest failures cost the newsroom nothing.
-  beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    closeWindow(); // nobody votes
-    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED
-  });
-
-  it("blocks the failed proposer from re-proposing the same week", () => {
-    expect(propose().result).toBeErr(Cl.uint(422));
-  });
-
-  it("blocks them from any other week too, not just the one that failed", () => {
-    expect(propose(proposer, "2026-07-27").result).toBeErr(Cl.uint(422));
-  });
-
-  it("lets a different member take the reopened week in the next block", () => {
-    expect(propose(voter1).result).toBeOk(Cl.stringAscii(WEEK));
-  });
-
-  it("lets the original proposer back in once the cooldown elapses", () => {
-    simnet.mineEmptyBlocks(VOTE_WINDOW + 1);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-  });
-
-  it("reports the cooldown height", () => {
-    const r = simnet.callReadOnlyFn(
-      GOV,
-      "get-propose-cooldown",
-      [Cl.principal(proposer)],
-      deployer,
-    );
-    expect((r.result as any).value).toBeGreaterThan(0n);
-  });
-});
-
-describe("bond floor protects a small pool", () => {
-  // The percentage bond is pool/200,000 -- 500 sats at 0.01 BTC, which is no
-  // deterrent at all. The floor makes proposing cost a real stake from day one.
-  it("charges MIN_BOND when the percentage bond would be dust", () => {
-    wire();
-    fundPool(1_000_000); // draw 5,000 -> percentage bond would be 500
-    stake(proposer);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    expect(lockedOf(proposer)).toBe(BigInt(MIN_BOND));
-  });
-
-  it("still uses the percentage bond once the pool is large enough", () => {
-    wire();
-    fundPool(); // 1 BTC -> bond 50,000, well above the floor
-    stake(proposer);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    expect(lockedOf(proposer)).toBe(BigInt(BOND));
-  });
-});
-
-describe("veto blocks a week that would otherwise pass", () => {
-  beforeEach(() => {
-    wire();
-    fundPool();
-    stake(proposer);
-    stake(voter1);
-    stake(voter2);
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    // Unanimous yes -- this week passes on the vote alone.
-    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
-    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
-    closeVoting();
-  });
-
-  it("refuses a veto before voting closes", () => {
-    // Fresh brief, still inside the voting window.
-    expect(propose(voter1, "2026-07-27").result).toBeOk(Cl.stringAscii("2026-07-27"));
-    expect(veto(voter2, "2026-07-27").result).toBeErr(Cl.uint(424));
-  });
-
-  it("refuses a second veto from the same principal", () => {
-    expect(veto(voter1).result).toBeOk(Cl.bool(true));
-    expect(veto(voter1).result).toBeErr(Cl.uint(425));
-  });
-
-  it("refuses settle while the veto window is still open", () => {
-    expect(settle().result).toBeErr(Cl.uint(408));
-  });
-
-  it("blocks the week when objections reach the veto quorum", () => {
-    // voter1 holds 10M of a 20M eligible base = 50%, far past the 15% needed.
-    expect(veto(voter1).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBlocks(VETO_WINDOW);
-
-    const aBefore = sbtcOf(corrA);
-    expect(settle().result).toBeOk(Cl.uint(4)); // STATUS_VETOED, not SETTLED
-    expect(sbtcOf(corrA)).toBe(aBefore);
-  });
-
-  it("returns the proposer's bond -- they cleared the bar they were set", () => {
-    expect(veto(voter1).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBlocks(VETO_WINDOW);
-    expect(settle().result).toBeOk(Cl.uint(4));
-    expect(stakeOf(proposer)).toBe(BigInt(STAKE));
-    expect(lockedOf(proposer)).toBe(0n);
-  });
-
-  it("leaves the pool untouched", () => {
-    expect(veto(voter1).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBlocks(VETO_WINDOW);
-    expect(settle().result).toBeOk(Cl.uint(4));
-    expect(poolOf()).toBe(BigInt(POOL));
-  });
-
-  it("still settles when objections fall short of the quorum", () => {
-    // A member below 15% of eligible weight objects; the week goes through.
-    faucet(outsider);
-    expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(1_000_000)], outsider).result).toBeOk(
-      Cl.uint(1_000_000),
-    );
-    expect(veto(outsider).result).toBeOk(Cl.bool(true)); // 1M of 20M = 5%
-    simnet.mineEmptyBlocks(VETO_WINDOW);
-
-    const aBefore = sbtcOf(corrA);
-    expect(settle().result).toBeOk(Cl.uint(1)); // SETTLED
-    expect(sbtcOf(corrA)).toBe(aBefore + BigInt(PAY_A));
-  });
-});
-
-describe("quorum is load-bearing", () => {
-  it("a lone minimum-stake member cannot approve a week by themselves", () => {
-    wire();
-    fundPool();
-    stake(proposer);
-    // 10k of a 10M eligible base is 0.1%, far below the 15% quorum -- and
-    // MIN_PARTICIPANTS is 2 regardless of weight.
-    faucet(voter1);
-    expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(MIN_STAKE)], voter1).result).toBeOk(
-      Cl.uint(MIN_STAKE),
-    );
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
-    closeWindow();
-
-    const aBefore = sbtcOf(corrA);
-    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED, not SETTLED
-    expect(sbtcOf(corrA)).toBe(aBefore);
+    expect(settle().result).toBeOk(Cl.uint(1));
   });
 });
