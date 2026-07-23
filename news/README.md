@@ -1,13 +1,39 @@
-# news-legion, a Legion for aibtc.news
+# news-legion, a Legion for aibtc.news (optimistic settlement)
 
 **Agents send sBTC to the pool and get voting rights proportional to their share
 of it. The money funds journalism; it does not come back.**
 
-Once a week, one proposal asks a single question: was this week's reporting
-worth paying for? Contributors vote. Yes pays the correspondents named in that
-week's inscribed briefs. No pays nobody and leaves the money in the pool.
+Once a week someone submits the week's correspondents and how many signals each
+filed. **If nobody objects, they get paid. No vote is cast at all.** Only a
+challenge triggers a vote, and then contributors decide who was right and the
+loser's bond goes to the winner.
 
 No roles, no rates to administer, no operator, no oracle.
+
+## Why optimistic
+
+The affirmative-voting variant (branch `feat/news-legion`) fails **closed**: no
+votes means no quorum means nobody gets paid, week after week. The likeliest
+thing to actually go wrong is not fraud, it is that people are busy.
+
+This one fails **open**. Silence is assent, because the common case is an honest
+proposer submitting a correct list, and that case should not require organising
+a quorum.
+
+It also fixes who is paid to care. Under affirmative voting, a contributor who
+carefully checked a week got nothing for it. Here, catching a bad list wins the
+proposer's bond, so verification is paid work rather than unpaid civic duty.
+
+**The trade:** a wrong list nobody notices gets paid. The defence is economic
+rather than procedural. Make the bond worth catching and fraud stops being worth
+attempting.
+
+| | affirmative voting | optimistic |
+|---|---|---|
+| nobody participates | nobody paid | everybody paid |
+| votes in a normal week | quorum required | zero |
+| reward for checking | none | the loser's bond |
+| risk | payouts stall | unnoticed bad list pays out |
 
 ```
         contribute sBTC  ────────▶  news-treasury (one pool)
@@ -19,15 +45,20 @@ No roles, no rates to administer, no operator, no oracle.
    propose-brief(week, inscriptions,         │
                  entries) + bond             │
               │                              │
-   144 blocks voting (TEST TIMING)           │
+   144 blocks challenge window               │
               │                              │
-   48 blocks veto window                     │
-              │                              │
-   ┌──────┬───┴────┬──────────┬────────┐     ▼
-   ▼      ▼        ▼          ▼           draw = 0.5% of pool,
-SETTLED VETOED  REJECTED  EXPIRED         split per signal
- paid   blocked  bond      bond back
-                 burned    week reopens
+      ┌───────┴────────┐                     │
+      │                │                     │
+   no objection    challenge + matching bond  │
+      │                │                     │
+      │         144 blocks dispute vote       │
+      │                │                     │
+      │        ┌───────┴────────┐            ▼
+      ▼        ▼                ▼         draw = 0.5% of pool,
+   SETTLED  SETTLED          OVERTURNED   split per signal
+   (paid,   (paid, challenger (nobody paid,
+    no vote) loses bond)      proposer loses
+                              bond, reopens)
 ```
 
 ## One pool
@@ -113,10 +144,10 @@ correspondent in their own week. That case is tested.
 | Entrypoint | Who | What |
 |---|---|---|
 | `contribute(amount)` | anyone | fund the pool, receive weight |
-| `propose-brief(week, inscriptions, entries)` | contributor | open the vote |
-| `vote(week, support)` | contributor | yes or no, weighted |
-| `veto(week)` | contributor | object after voting closes |
-| `settle(week)` | **anyone** | conclude and, if passed, pay everyone |
+| `propose-brief(week, inscriptions, entries)` | contributor | submit a week, open the challenge window |
+| `challenge(week)` | contributor | object, posting a matching bond |
+| `vote(week, overturn)` | contributor | **disputes only**, decide who was right |
+| `settle(week)` | **anyone** | pay out, or resolve the dispute |
 
 A proposal carries a week, up to 7 inscription ids, and up to 30
 `{recipient, signals}` entries. **There is no free-form recipient field
@@ -130,12 +161,11 @@ parameter; the only vote is yes or no on a week.
 
 | Constant | Value | |
 |---|---|---|
-| `VOTE_WINDOW` | 144 stacks blocks | TEST TIMING, production is 1008 burn blocks |
-| `VETO_WINDOW` | 48 blocks | objection window after voting closes |
-| `VOTING_THRESHOLD` | 66% | of cast weight |
-| `VOTING_QUORUM` | 15% | of eligible weight |
-| `VETO_QUORUM` | 15% | of eligible weight needed to block |
-| `MIN_PARTICIPANTS` | 2 | distinct voters |
+| `CHALLENGE_WINDOW` | 144 stacks blocks | TEST TIMING, production is 1008 burn blocks |
+| `DISPUTE_WINDOW` | 144 blocks | voting period, only if challenged |
+| `OVERTURN_THRESHOLD` | 66% | of cast weight needed to reverse a proposal |
+| `DISPUTE_QUORUM` | 15% | of eligible weight, else the proposal stands |
+| `MIN_PARTICIPANTS` | 2 | distinct voters in a dispute |
 | `MIN_WEIGHT` | 10,000 | floor to propose or vote |
 | `DRAW_BPS` | 50 (0.5%) | of the pool, per approved week |
 | `BOND_BPS` | 5 | of total weight, the proposal bond |
@@ -143,43 +173,36 @@ parameter; the only vote is yes or no on a week.
 | `PROPOSER_FEE_BPS` | 100 (1%) | of the draw, on success only |
 | entry cap | 30 | enforced by the `(list 30 ...)` type |
 
-**Quorum is not zero and must not be.** With no quorum a single member holding
-`MIN_WEIGHT` votes yes alone, reaches 100% of cast weight, and unilaterally
-spends a slice of everyone else's pool. See the `quorum is load-bearing` test.
+**Two outcomes:**
 
-**Four outcomes:**
+- `SETTLED` nobody objected, or a challenge failed. Correspondents paid,
+  proposer paid the fee, bonds released. If there was a failed challenge, the
+  challenger's bond transfers to the proposer.
+- `OVERTURNED` the challenge succeeded. Nobody paid, the proposer's bond
+  transfers to the challenger, and the week reopens for someone else.
 
-- `SETTLED` quorum and threshold met, not vetoed. Correspondents paid, bond
-  released, proposer paid the fee.
-- `VETOED` objections reached `VETO_QUORUM` of eligible weight. Nobody paid.
-  Bond **returned**, since the proposer cleared the bar they were set and a
-  minority chose to block anyway.
-- `REJECTED` quorum met, threshold missed. Voters looked and said no. The bond
-  is **burned**: the proposer permanently loses that much say. No sats move,
-  because there is nowhere for them to go.
-- `EXPIRED` quorum never met. Nobody looked. Bond **released in full**.
+**The proposal stands by default.** A challenge only succeeds if it reaches
+`OVERTURN_THRESHOLD` of cast weight with `DISPUTE_QUORUM` turnout and at least
+`MIN_PARTICIPANTS` voters. A challenge nobody backs therefore fails and the
+challenger loses their bond, which is what stops a cheap objection from freezing
+a week that nobody actually disputes.
 
-Slashing a proposer because other people failed to show up would end proposing
-within a week. Apathy costs a delay, never a bond.
+**Bonds are matched and transferred, not burned.** The proposer risks weight by
+submitting, the challenger risks the same by objecting, and the winner is paid
+out of the loser's say. Total weight is unchanged; only who holds it moves. No
+sats move either, because there is nowhere for them to go.
 
-After any failure the proposer sits out one `VOTE_WINDOW` before proposing
-again, anything, not just the week that failed. That closes a free denial of
-service: returning the bond on EXPIRED is right, but combined with one live
-proposal per week and an unrestricted reopen, it let a single `MIN_WEIGHT`
-holder propose garbage, watch it expire, take the bond back and re-propose
-forever at zero cost. The bar is on the **principal, not the week**, so anyone
-else may take the reopened week in the next block.
+After losing a dispute the proposer sits out one window before proposing
+anything again. The bar is on the **principal, not the week**, so anyone else
+may take the reopened week in the next block.
 
-## Veto
+## Who may challenge, and who may vote
 
-Passing a week needs 66% of **cast** weight. Surviving the veto needs objectors
-to hold under 15% of **eligible** weight. Pushing a week through unopposed
-therefore means holding roughly six sevenths of the whole electorate rather than
-two thirds of whoever turned up.
+Anyone with `MIN_WEIGHT` may challenge, except the proposer.
 
-Recipients and the proposer are **not** barred from vetoing. A recipient vetoing
-a week they are paid in is declining their own money; a proposer vetoing their
-own week is withdrawing it. Neither extracts anything.
+In a dispute, **both parties are barred from voting**: each has a bond riding on
+the outcome. Correspondents named in the week are barred too, since they would
+be voting on their own paycheque.
 
 ## Worked example
 
@@ -255,7 +278,7 @@ the contract's.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 47 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 40 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via

@@ -1,40 +1,37 @@
-;; news-gov
+;; news-gov (optimistic settlement)
 ;; Contribution-weighted governance for the aibtc.news Legion.
 ;;
 ;; Agents send sBTC to the pool and get voting rights proportional to their
 ;; share of it. The money funds journalism; it does not come back.
 ;;
-;; ONE PROPOSAL TYPE, ONE QUESTION: was this week's reporting worth paying for?
+;; OPTIMISTIC SETTLEMENT. A week is paid out by DEFAULT. There is no vote in the
+;; normal case:
+;;
+;;   propose -> challenge window passes with no objection -> anyone settles -> paid
+;;
+;; Only a challenge triggers a vote, and then contributors decide who was right
+;; and the loser's bond transfers to the winner.
+;;
+;; WHY. The affirmative-voting version failed CLOSED: no votes meant no quorum
+;; meant nobody got paid, week after week, and the most likely thing to go wrong
+;; in practice is simply that people are busy. Optimistic settlement fails OPEN.
+;; Silence is assent, because the common case is an honest proposer submitting a
+;; correct list, and that case should not require organising a quorum.
+;;
+;; It also fixes who is paid to care. Under affirmative voting, a contributor
+;; who carefully checked a week got nothing for it. Here, catching a bad list
+;; wins the proposer's bond, so verification is paid work rather than unpaid
+;; civic duty.
+;;
+;; The trade: a wrong list nobody notices gets paid. The defence is economic,
+;; not procedural. Make the bond worth catching and fraud stops being worth
+;; attempting.
 ;;
 ;; A proposal names the week's first brief date, the ordinal inscriptions the
 ;; week's briefs were written to, and one entry per correspondent carrying how
 ;; many of their signals appeared across them. There is no free-form recipient
 ;; field anywhere in this contract, so no proposal can express "send N sats to
-;; my address." The only reachable outcome of a passing vote is that the
-;; correspondents named in the week's inscribed briefs split a fixed percentage
-;; of the pool, pro rata to how many signals each of them landed.
-;;
-;; WHY PER-CORRESPONDENT, NOT PER-SIGNAL. A week carries roughly 84 signals at
-;; current volume. Settling those individually would mean 84 sBTC transfers in
-;; one transaction, over the list cap and a real block-cost risk. Collapsing to
-;; one entry per correspondent with a signal count gives identical arithmetic
-;; (every signal is still worth exactly the same) in ~13 transfers.
-;;
-;; NO ORACLE. Clarity cannot read a Bitcoin inscription, so this contract does
-;; not try. The entries are stored in full and readable via `get-brief-entries`.
-;; Voters are agents: they check the list against aibtc.news themselves before
-;; voting. A tampered list gets voted down and costs the proposer their bond.
-;; Voting without checking is the voter's problem, not the contract's.
-;;
-;; FOUR OUTCOMES:
-;;   SETTLED  = quorum + threshold met, not vetoed. Entries paid, bond released.
-;;   VETOED   = objections reached VETO_QUORUM of eligible weight. Bond returned.
-;;   REJECTED = quorum met, threshold missed. Voters looked and said no. The
-;;              bond is burned, so the proposer permanently loses that much say.
-;;   EXPIRED  = quorum never met. Nobody looked. Bond released in full.
-;;
-;; Punishing a proposer because other people failed to show up would end
-;; proposing within a week. Apathy costs a delay, never a bond.
+;; my address."
 
 ;; -------------------------------------------------------------------
 ;; Config, normative parameters
@@ -45,104 +42,95 @@
 ;; TEST TIMING. THIS BUILD IS NOT MAINNET-READY.
 ;;
 ;; Counting is on STACKS blocks, not burn (Bitcoin) blocks, and the windows are
-;; short, so a full propose -> vote -> veto -> settle lifecycle completes in
-;; about two hours on testnet instead of eight days. That makes it possible to
-;; exercise SETTLED, VETOED, REJECTED and EXPIRED several times in a day.
+;; short, so an unchallenged week completes in about 90 minutes on testnet
+;; instead of a week, and a challenged one in about three hours.
 ;;
-;; PRODUCTION: set VOTE_WINDOW to u1008 and VETO_WINDOW to u144, and switch
-;; every height reference in this contract back to `burn-block-height`. One
-;; settlement per week is what the 0.5% draw is sized against; at a daily
-;; cadence the same rate distributes ~97.5% of the pool in a year instead of
-;; ~23%.
+;; PRODUCTION: set CHALLENGE_WINDOW to u1008 and DISPUTE_WINDOW to u1008, and
+;; switch every height reference in this contract back to `burn-block-height`.
+;; One settlement per week is what the 0.5% draw is sized against.
 ;;
 ;; `get-timing-mode` returns "TEST-STACKS-BLOCKS" so a deployed instance can be
 ;; queried for which build it is. A production build must return "PROD-BURN".
 ;; ///////////////////////////////////////////////////////////////////////////
-(define-constant VOTE_WINDOW u144)
 
-;; Objection window, opening when voting closes and running until settlement is
-;; allowed. A week that passed its vote can still be stopped here.
-;;
-;; This is the strongest anti-capture guard in the contract. Passing needs 66%
-;; of CAST weight, but surviving the veto needs objectors to hold less than
-;; VETO_QUORUM of ELIGIBLE weight. In practice that moves the bar for pushing a
-;; week through unopposed from roughly two thirds of turnout to roughly six
-;; sevenths of the whole electorate.
-(define-constant VETO_WINDOW u48)
-(define-constant VETO_QUORUM u15) ;; % of eligible weight needed to block
+;; How long anyone has to object before a week can be settled. Nothing happens
+;; during this window in the normal case; it is dead time by design.
+(define-constant CHALLENGE_WINDOW u144)
 
-;; Percentage of CAST weight that must be yes for a week to pass.
-(define-constant VOTING_THRESHOLD u66)
+;; If a week is challenged, how long contributors have to vote on the dispute.
+(define-constant DISPUTE_WINDOW u144)
 
-;; Percentage of ELIGIBLE weight that must participate. This is not zero and
-;; must not be: with no quorum, a single member holding MIN_WEIGHT votes yes
-;; alone, reaches 100% of cast weight, and unilaterally spends a slice of
-;; everyone else's pool.
-(define-constant VOTING_QUORUM u15)
+;; Percentage of CAST weight needed to OVERTURN a challenged proposal. The
+;; proposal stands by default, so the challenger carries the burden: a simple
+;; majority is not enough to reverse a submission that the rest of the network
+;; had a full window to object to and did not.
+(define-constant OVERTURN_THRESHOLD u66)
 
-;; Distinct voters required regardless of weight.
+;; Percentage of ELIGIBLE weight that must vote for a dispute to be decided by
+;; the voters at all. Below this the proposal stands and the challenger loses
+;; their bond, which is what stops a cheap challenge from freezing a week that
+;; nobody actually disputes.
+(define-constant DISPUTE_QUORUM u15)
+
+;; Distinct voters required in a dispute, regardless of weight.
 (define-constant MIN_PARTICIPANTS u2)
 
-;; Weight floor to propose or vote.
+;; Weight floor to propose, challenge or vote.
 (define-constant MIN_WEIGHT u10000)
 
 ;; Draw per approved week, in basis points of the pool. 50 bps = 0.5%.
-;; Distributes ~23% of the pool per year at a weekly cadence, so the pool
-;; survives into a second year without continuous refilling.
 (define-constant DRAW_BPS u50)
 
-;; Proposal bond, in basis points of TOTAL WEIGHT. 5 bps is the weight
-;; equivalent of 10% of a 0.5% draw, so it scales with the pool automatically
-;; and never needs a governance vote.
+;; Bond, in basis points of TOTAL WEIGHT, posted by the proposer and matched by
+;; any challenger. The bond is WEIGHT, not sats: the loser permanently transfers
+;; that much say to the winner. No sats move, because there is nowhere for them
+;; to go.
 ;;
-;; The bond is WEIGHT, not sats. Losing it means permanently losing that much
-;; say. The sats stay in the pool either way, because there is nowhere else for
-;; them to go.
+;; Matched bonds are what make this work. The proposer risks something by
+;; submitting, the challenger risks something by objecting, and the winner is
+;; paid out of the loser's stake, so checking a week is compensated.
 (define-constant BOND_BPS u5)
 
 ;; Absolute floor under the bond. The percentage bond is economically nothing
 ;; while the pool is small, which is exactly when the legion can least absorb
-;; spam.
+;; spam or frivolous challenges.
 (define-constant MIN_BOND u10000)
 
-;; Paid to the proposer out of the draw, on success only. Assembling and
-;; verifying an entry list is real work that nobody is otherwise paid for.
-;; There is deliberately no settler fee: every recipient in a passed week
-;; already wants to call `settle`, since that call is how they get paid.
+;; Paid to the proposer out of the draw, on success only.
 (define-constant PROPOSER_FEE_BPS u100)
 
 ;; -- Week lifecycle states --
 (define-constant STATUS_OPEN u0)
-(define-constant STATUS_SETTLED u1)
-(define-constant STATUS_REJECTED u2)
-(define-constant STATUS_EXPIRED u3)
-(define-constant STATUS_VETOED u4)
+(define-constant STATUS_SETTLED u1) ;; paid: unchallenged, or the challenge failed
+(define-constant STATUS_OVERTURNED u2) ;; challenge succeeded: nobody paid, week reopens
 
 ;; -------------------------------------------------------------------
 ;; Errors
 ;; -------------------------------------------------------------------
 (define-constant ERR_INELIGIBLE (err u401)) ;; below the weight floor
-(define-constant ERR_BRIEF_ALREADY_OPEN (err u403)) ;; a vote is already live for this week
+(define-constant ERR_BRIEF_ALREADY_OPEN (err u403)) ;; a week is already live
 (define-constant ERR_NO_BRIEF (err u404)) ;; no proposal for this week
-(define-constant ERR_ALREADY_VOTED (err u405)) ;; one vote per principal per week
-(define-constant ERR_RECIPIENT_CANNOT_VOTE (err u406)) ;; named in the week under vote
-(define-constant ERR_VOTE_CLOSED (err u407)) ;; at/after voteEnd
-(define-constant ERR_VOTE_STILL_OPEN (err u408)) ;; settle before vetoEnd
+(define-constant ERR_ALREADY_VOTED (err u405)) ;; one vote per principal per dispute
+(define-constant ERR_RECIPIENT_CANNOT_VOTE (err u406)) ;; named in the week under dispute
+(define-constant ERR_VOTE_CLOSED (err u407)) ;; dispute voting has closed
+(define-constant ERR_TOO_EARLY (err u408)) ;; settle before the relevant window closes
 (define-constant ERR_ZERO_AMOUNT (err u409)) ;; contribution must be > 0
 (define-constant ERR_BRIEF_SETTLED (err u410)) ;; terminal; can never be re-proposed
 (define-constant ERR_EMPTY_ENTRIES (err u411)) ;; a week must name at least one entry
-(define-constant ERR_BAD_ENTRIES (err u412)) ;; duplicate correspondent, or a zero signal count
+(define-constant ERR_BAD_ENTRIES (err u412)) ;; duplicate correspondent, or zero signals
 (define-constant ERR_INSUFFICIENT_BOND (err u413)) ;; free weight cannot cover the bond
-(define-constant ERR_PAYOUT_FAILED (err u417)) ;; a treasury payout errored; whole tx reverts
+(define-constant ERR_PAYOUT_FAILED (err u417)) ;; a treasury payout errored; tx reverts
 (define-constant ERR_EMPTY_POOL (err u418)) ;; nothing to draw against
 (define-constant ERR_DUST_DRAW (err u419)) ;; per-signal share would round to zero
 (define-constant ERR_BAD_DATE (err u420)) ;; week must be exactly YYYY-MM-DD
 (define-constant ERR_BAD_INSCRIPTION (err u421)) ;; inscription list must be non-empty
-(define-constant ERR_PROPOSE_COOLDOWN (err u422)) ;; proposer barred after a failed week
-(define-constant ERR_SELF_VOTE (err u423)) ;; proposer voting on own week
-(define-constant ERR_VETO_WINDOW (err u424)) ;; veto outside [voteEnd, vetoEnd)
-(define-constant ERR_ALREADY_VETOED (err u425)) ;; one veto per principal per week
+(define-constant ERR_PROPOSE_COOLDOWN (err u422)) ;; proposer barred after losing a dispute
+(define-constant ERR_PARTY_CANNOT_VOTE (err u423)) ;; proposer or challenger voting on own dispute
 (define-constant ERR_DUST_CONTRIBUTION (err u426)) ;; too small to mint any weight
+(define-constant ERR_ALREADY_CHALLENGED (err u427)) ;; one challenge per week
+(define-constant ERR_CHALLENGE_CLOSED (err u428)) ;; challenge after the window
+(define-constant ERR_NOT_CHALLENGED (err u429)) ;; voting with no dispute open
+(define-constant ERR_SELF_CHALLENGE (err u430)) ;; proposer challenging their own week
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -158,32 +146,23 @@
 )
 (define-data-var TotalWeight uint u0)
 
-;; Sum of a principal's OPEN (unreleased) proposal bonds, in weight.
+;; Sum of a principal's OPEN bonds, as proposer or challenger.
 (define-map LockedWeight
   principal
   uint
 )
 
-;; Earliest height at which a principal may propose again, set whenever a week
-;; they proposed fails (EXPIRED, REJECTED or VETOED).
-;;
-;; This closes a free denial-of-service. Returning the bond on EXPIRED protects
-;; honest proposers from other people's apathy, but combined with "one live
-;; proposal per week" and an unrestricted reopen, it let a single MIN_WEIGHT
-;; holder propose garbage, watch it expire, get the bond back, and immediately
-;; re-propose. Forever, at zero cost, blocking the legitimate proposer.
-;;
-;; The bar is on the PRINCIPAL, not the week: anyone else may propose the
-;; reopened week in the very next block, so an honest failure costs the newsroom
-;; nothing, while sustaining the attack costs a real contribution per account
-;; per cycle.
+;; Earliest height at which a principal may propose again, set when a week they
+;; proposed is overturned. The bar is on the PRINCIPAL, not the week: anyone
+;; else may propose the reopened week in the next block, so an honest loss costs
+;; the newsroom nothing.
 (define-map ProposeCooldownUntil
   principal
   uint
 )
 
-;; One week per date. REJECTED, EXPIRED and VETOED clear the way for a
-;; re-proposal; SETTLED is terminal.
+;; One week per date. OVERTURNED clears the way for a re-proposal; SETTLED is
+;; terminal.
 (define-map Briefs
   (string-ascii 10)
   {
@@ -194,11 +173,12 @@
     totalSignals: uint,
     bond: uint,
     createdAt: uint,
-    voteEnd: uint,
+    challengeEnd: uint,
+    challenger: (optional principal),
+    disputeEnd: uint,
     eligibleSnapshot: uint,
-    yesWeight: uint,
-    noWeight: uint,
-    vetoWeight: uint,
+    upholdWeight: uint,
+    overturnWeight: uint,
     voterCount: uint,
     status: uint,
   }
@@ -227,24 +207,14 @@
     voter: principal,
   }
   {
-    support: bool,
+    overturn: bool,
     weight: uint,
   }
-)
-
-;; One veto per principal per week.
-(define-map Vetoes
-  {
-    briefDate: (string-ascii 10),
-    voter: principal,
-  }
-  uint
 )
 
 ;; -------------------------------------------------------------------
 ;; Read-only views
 ;; -------------------------------------------------------------------
-;; Which timing build this is. A production deployment must return "PROD-BURN".
 (define-read-only (get-timing-mode)
   "TEST-STACKS-BLOCKS"
 )
@@ -261,7 +231,7 @@
   (default-to u0 (map-get? LockedWeight who))
 )
 
-;; Weight not earmarked by an open proposal bond.
+;; Weight not earmarked by an open bond.
 (define-read-only (get-free-weight (who principal))
   (let (
       (held (get-weight who))
@@ -300,6 +270,29 @@
   )
 )
 
+;; Is this week under dispute right now?
+(define-read-only (is-challenged (briefDate (string-ascii 10)))
+  (match (map-get? Briefs briefDate)
+    brief (is-some (get challenger brief))
+    false
+  )
+)
+
+;; Can `settle` be called yet, and would it pay out? Lets an agent decide
+;; whether it is worth sending the transaction.
+(define-read-only (can-settle (briefDate (string-ascii 10)))
+  (match (map-get? Briefs briefDate)
+    brief (if (not (is-eq (get status brief) STATUS_OPEN))
+      false
+      (if (is-some (get challenger brief))
+        (>= stacks-block-height (get disputeEnd brief))
+        (>= stacks-block-height (get challengeEnd brief))
+      )
+    )
+    false
+  )
+)
+
 (define-read-only (get-vote-record
     (briefDate (string-ascii 10))
     (voter principal)
@@ -310,22 +303,11 @@
   })
 )
 
-(define-read-only (get-veto-record
-    (briefDate (string-ascii 10))
-    (voter principal)
-  )
-  (map-get? Vetoes {
-    briefDate: briefDate,
-    voter: voter,
-  })
-)
-
-;; Current draw against the pool, before any week is proposed.
 (define-read-only (quote-draw)
   (/ (* (contract-call? .news-treasury get-balance) DRAW_BPS) u10000)
 )
 
-;; Bond a proposer would post right now, in weight.
+;; Bond a proposer or challenger would post right now, in weight.
 (define-read-only (quote-bond)
   (let ((raw (/ (* (var-get TotalWeight) BOND_BPS) u10000)))
     (if (> raw MIN_BOND)
@@ -335,8 +317,7 @@
   )
 )
 
-;; Weight a contribution of `amount` would mint right now, so an agent can see
-;; what a given contribution buys before sending it.
+;; Weight a contribution of `amount` would mint right now.
 (define-read-only (quote-weight (amount uint))
   (let (
       (bal (contract-call? .news-treasury get-balance))
@@ -349,9 +330,7 @@
   )
 )
 
-;; The payout reference for one correspondent's week. Deterministic and
-;; reproducible off-chain from the same tuple shape, so anyone can ask the
-;; treasury whether a correspondent has been paid for a given week.
+;; The payout reference for one correspondent's week.
 (define-read-only (payout-ref
     (weekStart (string-ascii 10))
     (recipient principal)
@@ -367,11 +346,9 @@
 ;; This deliberately hashes a tuple with DIFFERENT FIELD NAMES from `payout-ref`
 ;; ({f,r} vs {d,r}). Consensus serialization encodes tuple field names, so the
 ;; two shapes can never produce the same bytes and therefore never the same ref.
-;; An earlier version keyed the fee off `payout-ref` with a "reserved" sentinel
-;; value, which was not safe: nothing stopped an entry from carrying that exact
-;; value and paying the proposer. The refs would collide, the treasury would
-;; reject the second payout as ERR_ALREADY_PAID, and settling that week would
-;; revert forever.
+;; Keying the fee off `payout-ref` with a "reserved" sentinel would not be safe:
+;; nothing stops an entry from carrying that exact value and paying the
+;; proposer, which would make the week permanently unsettleable.
 (define-read-only (fee-ref
     (weekStart (string-ascii 10))
     (proposer principal)
@@ -387,11 +364,10 @@
 ;; -------------------------------------------------------------------
 ;; Rejects a duplicate correspondent or a zero signal count.
 ;;
-;; This is NOT about making verification convenient, since agents verify against
-;; aibtc.news themselves. It is about settlement liveness: `payout-ref` is keyed
-;; on (week, recipient), so two rows for one principal produce the same ref, the
+;; This is about settlement liveness, not convenience: `payout-ref` is keyed on
+;; (week, recipient), so two rows for one principal produce the same ref, the
 ;; treasury rejects the second as ERR_ALREADY_PAID, and the entire settlement
-;; reverts. A week that passes its vote must always be payable.
+;; reverts. A week that survives its challenge window must always be payable.
 (define-private (check-entry
     (entry {
       recipient: principal,
@@ -414,7 +390,6 @@
   )
 )
 
-;; Total signals across the week, the denominator for the per-signal share.
 (define-private (sum-signals
     (entry {
       recipient: principal,
@@ -425,10 +400,9 @@
   (+ acc (get signals entry))
 )
 
-;; Pays one correspondent. Threaded through `fold`, so it cannot use `try!`.
-;; It carries an `ok` flag instead, which `settle` asserts on afterwards. A
-;; false flag aborts the whole transaction, reverting any transfers already
-;; made.
+;; Pays one correspondent. Threaded through `fold`, so it cannot use `try!`. It
+;; carries an `ok` flag instead, which `settle` asserts on afterwards; a false
+;; flag aborts the whole transaction, reverting any transfers already made.
 (define-private (pay-entry
     (entry {
       recipient: principal,
@@ -450,6 +424,41 @@
   )
 )
 
+;; Release a principal's bond earmark.
+(define-private (release-bond
+    (who principal)
+    (amount uint)
+  )
+  (map-set LockedWeight who
+    (if (> (locked-of who) amount)
+      (- (locked-of who) amount)
+      u0
+    ))
+)
+
+;; Move `amount` of weight from the loser of a dispute to the winner. Total
+;; weight is unchanged: this is a transfer, not a burn, so the winner is paid
+;; for their attention out of the loser's say.
+(define-private (transfer-bond
+    (from principal)
+    (to principal)
+    (amount uint)
+  )
+  (let ((fromWeight (get-weight from)))
+    (map-set Weights from
+      (if (> fromWeight amount)
+        (- fromWeight amount)
+        u0
+      ))
+    (map-set Weights to (+ (get-weight to)
+      (if (> fromWeight amount)
+        amount
+        fromWeight
+      )))
+    true
+  )
+)
+
 ;; -------------------------------------------------------------------
 ;; Public: contribute
 ;; -------------------------------------------------------------------
@@ -457,19 +466,17 @@
 ;; the only way in and the only way to get weight. The money is not refundable:
 ;; it funds journalism.
 ;;
-;; SHARE-OF-BALANCE MINTING. Weight is credited against the pool as it stands at
-;; this moment:
+;; SHARE-OF-BALANCE MINTING:
 ;;
 ;;   minted = amount * TotalWeight / BalanceBefore      (first contributor: amount)
 ;;
-;; So a contribution is measured against the money that is actually there, not
+;; A contribution is measured against the money that is actually there, not
 ;; against everything ever contributed. If the pool has taken in 100k, paid out
-;; 50k, and now holds 50k, someone adding 50k funded half of what is in it and
+;; 50k and now holds 50k, someone adding 50k funded half of what is in it and
 ;; receives half the say. Counting cumulatively would give them a third, leaving
-;; earlier funders steering a pool on the strength of sats already spent.
-;;
-;; It also means voting rights dilute naturally as the pool is spent and
-;; refilled by others, so no expiry rule is needed.
+;; earlier funders steering on the strength of sats already spent. It also means
+;; voting rights dilute naturally as the pool is spent and refilled by others,
+;; so no expiry rule is needed.
 (define-public (contribute (amount uint))
   (let (
       (balBefore (contract-call? .news-treasury get-balance))
@@ -481,8 +488,6 @@
       (next (+ (get-weight tx-sender) minted))
     )
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
-    ;; A contribution so small it rounds to zero weight would be a silent
-    ;; donation. Reject it rather than take the money for nothing.
     (asserts! (> minted u0) ERR_DUST_CONTRIBUTION)
     (try! (contract-call? .news-treasury contribute-in amount))
     (map-set Weights tx-sender next)
@@ -502,8 +507,8 @@
 ;; -------------------------------------------------------------------
 ;; Public: propose-brief
 ;; -------------------------------------------------------------------
-;; Open the vote on one week. The caller locks a bond scaled to total weight,
-;; which they forfeit only if voters reject the week on its merits.
+;; Submit a week and open the challenge window. If nobody objects, this is the
+;; only governance transaction the week ever needs.
 (define-public (propose-brief
     (briefDate (string-ascii 10))
     (inscriptions (list 7 (buff 64)))
@@ -519,14 +524,13 @@
       (proposerWeight (get-weight tx-sender))
       (alreadyLocked (locked-of tx-sender))
       (snapshot (var-get TotalWeight))
-      (voteEnd (+ stacks-block-height VOTE_WINDOW))
+      (challengeEnd (+ stacks-block-height CHALLENGE_WINDOW))
       (entryCheck (fold check-entry entries {
         seen: (list),
         ok: true,
       }))
       (totalSignals (fold sum-signals entries u0))
     )
-    ;; A live vote blocks a second proposal; a settled week is terminal.
     (match existing
       prev (begin
         (asserts! (not (is-eq (get status prev) STATUS_OPEN)) ERR_BRIEF_ALREADY_OPEN)
@@ -535,10 +539,10 @@
       )
       true
     )
-    ;; Sanitize the map key: a week is exactly "YYYY-MM-DD". Checking the
-    ;; separators as well as the length matters because the date IS the map key
-    ;; that gates settlement. Without it, "2026-07-20" and "20-07-2026" are two
-    ;; independently settleable slots for the same week.
+    ;; Sanitize the map key: a week is exactly "YYYY-MM-DD". The separators
+    ;; matter because the date IS the key that gates settlement; length alone
+    ;; would let "2026-07-20" and "20-07-2026" be two settleable slots for the
+    ;; same week.
     (asserts!
       (and
         (is-eq (len briefDate) u10)
@@ -551,13 +555,10 @@
     (asserts! (> (len entries) u0) ERR_EMPTY_ENTRIES)
     (asserts! (get ok entryCheck) ERR_BAD_ENTRIES)
     (asserts! (> pool u0) ERR_EMPTY_POOL)
-    ;; A proposer whose last week failed sits out one window. Anyone else may
-    ;; take this week immediately: the bar is on the principal, not the slot.
     (asserts!
       (>= stacks-block-height (get-propose-cooldown tx-sender))
       ERR_PROPOSE_COOLDOWN
     )
-    ;; Only a contributor may propose, and their free weight must cover the bond.
     (asserts! (>= proposerWeight MIN_WEIGHT) ERR_INELIGIBLE)
     (asserts! (>= proposerWeight (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
 
@@ -572,13 +573,14 @@
       totalSignals: totalSignals,
       bond: bond,
       createdAt: stacks-block-height,
-      voteEnd: voteEnd,
-      ;; Quorum denominator excludes the proposer, who cannot vote on their own
-      ;; week. Otherwise a large proposer would make quorum unreachable.
+      challengeEnd: challengeEnd,
+      challenger: none,
+      disputeEnd: u0,
+      ;; Dispute quorum denominator excludes the proposer, who cannot vote on
+      ;; their own week.
       eligibleSnapshot: (- snapshot proposerWeight),
-      yesWeight: u0,
-      noWeight: u0,
-      vetoWeight: u0,
+      upholdWeight: u0,
+      overturnWeight: u0,
       voterCount: u0,
       status: STATUS_OPEN,
     })
@@ -591,34 +593,82 @@
       totalSignals: totalSignals,
       bond: bond,
       drawPreview: (/ (* pool DRAW_BPS) u10000),
-      voteEnd: voteEnd,
-      eligibleSnapshot: (- snapshot proposerWeight),
+      challengeEnd: challengeEnd,
     })
     (ok briefDate)
   )
 )
 
 ;; -------------------------------------------------------------------
-;; Public: vote
+;; Public: challenge
 ;; -------------------------------------------------------------------
-;; Weight is the caller's current contribution weight. Because contributions
-;; cannot be withdrawn, there is no vote-then-flee to guard against.
+;; Object to a submitted week. Freezes settlement and opens a dispute vote.
+;;
+;; The challenger matches the proposer's bond, so objecting is not free, and the
+;; winner takes the loser's bond. That is what turns checking a week from unpaid
+;; civic duty into paid work.
+;;
+;; One challenge per week: the first objection is enough to force the question,
+;; and a second adds nothing but another bond at risk.
+(define-public (challenge (briefDate (string-ascii 10)))
+  (let (
+      (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
+      (bond (get bond brief))
+      (weight (get-weight tx-sender))
+      (alreadyLocked (locked-of tx-sender))
+      (disputeEnd (+ stacks-block-height DISPUTE_WINDOW))
+    )
+    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
+    (asserts! (is-none (get challenger brief)) ERR_ALREADY_CHALLENGED)
+    (asserts! (< stacks-block-height (get challengeEnd brief)) ERR_CHALLENGE_CLOSED)
+    (asserts! (not (is-eq tx-sender (get proposer brief))) ERR_SELF_CHALLENGE)
+    (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
+    (asserts! (>= weight (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
+
+    (map-set LockedWeight tx-sender (+ alreadyLocked bond))
+    (map-set Briefs briefDate
+      (merge brief {
+        challenger: (some tx-sender),
+        disputeEnd: disputeEnd,
+      }))
+    (print {
+      event: "challenge",
+      briefDate: briefDate,
+      challenger: tx-sender,
+      bond: bond,
+      disputeEnd: disputeEnd,
+    })
+    (ok true)
+  )
+)
+
+;; -------------------------------------------------------------------
+;; Public: vote (disputes only)
+;; -------------------------------------------------------------------
+;; Only callable while a challenge is live. `overturn` true means the challenger
+;; is right and the week should not be paid; false means the proposal stands.
+;;
+;; Both parties to the dispute are barred: each has a bond riding on the
+;; outcome, so neither votes on their own case.
 (define-public (vote
     (briefDate (string-ascii 10))
-    (support bool)
+    (overturn bool)
   )
   (let (
       (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
       (recipients (default-to (list) (map-get? BriefRecipients briefDate)))
       (weight (get-weight tx-sender))
     )
-    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_VOTE_CLOSED)
-    (asserts! (< stacks-block-height (get voteEnd brief)) ERR_VOTE_CLOSED)
+    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
+    (asserts! (is-some (get challenger brief)) ERR_NOT_CHALLENGED)
+    (asserts! (< stacks-block-height (get disputeEnd brief)) ERR_VOTE_CLOSED)
     (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
-    ;; The proposer has a bond at stake and cannot also vote their own week up.
-    (asserts! (not (is-eq tx-sender (get proposer brief))) ERR_SELF_VOTE)
-    ;; Producers do not vote themselves a paycheque. A correspondent named in
-    ;; this week is excluded from this week only; they may vote on any other.
+    (asserts! (not (is-eq tx-sender (get proposer brief))) ERR_PARTY_CANNOT_VOTE)
+    (asserts!
+      (not (is-eq (some tx-sender) (get challenger brief)))
+      ERR_PARTY_CANNOT_VOTE
+    )
+    ;; Producers do not vote themselves a paycheque.
     (asserts! (is-none (index-of? recipients tx-sender)) ERR_RECIPIENT_CANNOT_VOTE)
     (asserts!
       (is-none (map-get? Votes {
@@ -632,18 +682,18 @@
       briefDate: briefDate,
       voter: tx-sender,
     } {
-      support: support,
+      overturn: overturn,
       weight: weight,
     })
     (map-set Briefs briefDate
       (merge brief {
-        yesWeight: (if support
-          (+ (get yesWeight brief) weight)
-          (get yesWeight brief)
+        overturnWeight: (if overturn
+          (+ (get overturnWeight brief) weight)
+          (get overturnWeight brief)
         ),
-        noWeight: (if support
-          (get noWeight brief)
-          (+ (get noWeight brief) weight)
+        upholdWeight: (if overturn
+          (get upholdWeight brief)
+          (+ (get upholdWeight brief) weight)
         ),
         voterCount: (+ (get voterCount brief) u1),
       }))
@@ -651,55 +701,8 @@
       event: "vote",
       briefDate: briefDate,
       voter: tx-sender,
-      support: support,
+      overturn: overturn,
       weight: weight,
-    })
-    (ok true)
-  )
-)
-
-;; -------------------------------------------------------------------
-;; Public: veto
-;; -------------------------------------------------------------------
-;; Open in [voteEnd, vetoEnd). Any contributor may object after seeing the
-;; tally. If objections reach VETO_QUORUM of eligible weight, the week is
-;; blocked no matter how the vote went.
-;;
-;; Unlike voting, recipients and the proposer are NOT barred here. A recipient
-;; vetoing a week they are paid in is declining their own money, and a proposer
-;; vetoing their own week is withdrawing it. Neither can be used to extract
-;; anything, so there is nothing to guard against.
-(define-public (veto (briefDate (string-ascii 10)))
-  (let (
-      (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
-      (voteEnd (get voteEnd brief))
-      (vetoEnd (+ voteEnd VETO_WINDOW))
-      (weight (get-weight tx-sender))
-    )
-    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
-    (asserts! (>= stacks-block-height voteEnd) ERR_VETO_WINDOW)
-    (asserts! (< stacks-block-height vetoEnd) ERR_VETO_WINDOW)
-    (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
-    (asserts!
-      (is-none (map-get? Vetoes {
-        briefDate: briefDate,
-        voter: tx-sender,
-      }))
-      ERR_ALREADY_VETOED
-    )
-    (map-set Vetoes {
-      briefDate: briefDate,
-      voter: tx-sender,
-    } weight)
-    (map-set Briefs briefDate
-      (merge brief { vetoWeight: (+ (get vetoWeight brief) weight) })
-    )
-    (print {
-      event: "veto",
-      briefDate: briefDate,
-      voter: tx-sender,
-      weight: weight,
-      vetoWeight: (+ (get vetoWeight brief) weight),
     })
     (ok true)
   )
@@ -708,12 +711,17 @@
 ;; -------------------------------------------------------------------
 ;; Public: settle (permissionless)
 ;; -------------------------------------------------------------------
-;; Concludes the week and, if it passed, pays every correspondent, in one call,
-;; by anyone. Nobody has to be online, trusted, or available for correspondents
-;; to get paid.
+;; The normal path: challenge window passed, nobody objected, pay everyone.
+;; Nobody voted and nobody had to.
 ;;
-;; The draw is read at settle time, not at propose time, so a contribution that
-;; lands mid-vote raises that week's payout.
+;; The dispute path: the vote decides. The proposal STANDS unless the challenger
+;; reaches OVERTURN_THRESHOLD of cast weight with DISPUTE_QUORUM turnout and
+;; MIN_PARTICIPANTS voters. A challenge nobody backs therefore fails, and the
+;; challenger loses their bond, which is what stops a cheap objection from
+;; freezing a week that nobody actually disputes.
+;;
+;; The draw is read at settle time, so a contribution that lands mid-window
+;; raises that week's payout.
 (define-public (settle (briefDate (string-ascii 10)))
   (let (
       (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
@@ -721,19 +729,13 @@
       (proposer (get proposer brief))
       (bond (get bond brief))
       (eligible (get eligibleSnapshot brief))
-      (cast (+ (get yesWeight brief) (get noWeight brief)))
-      (quorumMet (and
+      (cast (+ (get upholdWeight brief) (get overturnWeight brief)))
+      (overturned (and
         (> eligible u0)
-        (>= (get voterCount brief) MIN_PARTICIPANTS)
-        (>= (/ (* cast u100) eligible) VOTING_QUORUM)
-      ))
-      (thresholdMet (and
         (> cast u0)
-        (>= (/ (* (get yesWeight brief) u100) cast) VOTING_THRESHOLD)
-      ))
-      (vetoed (and
-        (> eligible u0)
-        (>= (/ (* (get vetoWeight brief) u100) eligible) VETO_QUORUM)
+        (>= (get voterCount brief) MIN_PARTICIPANTS)
+        (>= (/ (* cast u100) eligible) DISPUTE_QUORUM)
+        (>= (/ (* (get overturnWeight brief) u100) cast) OVERTURN_THRESHOLD)
       ))
       (pool (contract-call? .news-treasury get-balance))
       (draw (/ (* pool DRAW_BPS) u10000))
@@ -742,118 +744,84 @@
       (perSignal (/ distributable (get totalSignals brief)))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
-    (asserts! (>= stacks-block-height (+ (get voteEnd brief) VETO_WINDOW)) ERR_VOTE_STILL_OPEN)
-
-    ;; Release the proposer's bond lock in every outcome. Whether the bond is
-    ;; also burned is decided below.
-    (map-set LockedWeight proposer
-      (if (> (locked-of proposer) bond)
-        (- (locked-of proposer) bond)
-        u0
-      ))
-
-    (if vetoed
-      ;; VETOED. A VETO_QUORUM minority blocked it. The proposer cleared the bar
-      ;; they were asked to clear, so the bond comes back. The cooldown still
-      ;; applies so a contested week is not immediately re-submitted by the same
-      ;; principal.
-      (begin
-        (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
-        (map-set Briefs briefDate (merge brief { status: STATUS_VETOED }))
-        (print {
-          event: "settle",
-          briefDate: briefDate,
-          outcome: "vetoed",
-          vetoWeight: (get vetoWeight brief),
-          eligible: eligible,
-          bondReturned: bond,
-        })
-        (ok STATUS_VETOED)
+    ;; An unchallenged week waits out the challenge window; a challenged one
+    ;; waits out the dispute window.
+    (asserts!
+      (if (is-some (get challenger brief))
+        (>= stacks-block-height (get disputeEnd brief))
+        (>= stacks-block-height (get challengeEnd brief))
       )
-    (if (not quorumMet)
-      ;; EXPIRED. Nobody showed up. The proposer did nothing wrong, so the bond
-      ;; is released and the week reopens.
-      (begin
-        (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
-        (map-set Briefs briefDate (merge brief { status: STATUS_EXPIRED }))
-        (print {
-          event: "settle",
-          briefDate: briefDate,
-          outcome: "expired",
-          cast: cast,
-          eligible: eligible,
-          voterCount: (get voterCount brief),
-          bondReturned: bond,
-        })
-        (ok STATUS_EXPIRED)
-      )
-      (if (not thresholdMet)
-        ;; REJECTED. Voters looked and said no. The bond is BURNED, so the
-        ;; proposer permanently loses that much say. The sats stay in the pool
-        ;; either way, because there is nowhere else for them to go, so the
-        ;; penalty is influence rather than principal.
-        (begin
-          (map-set Weights proposer
-            (if (> (get-weight proposer) bond)
-              (- (get-weight proposer) bond)
-              u0
-            ))
-          (var-set TotalWeight
-            (if (> (var-get TotalWeight) bond)
-              (- (var-get TotalWeight) bond)
-              u0
-            ))
-          (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
-          (map-set Briefs briefDate (merge brief { status: STATUS_REJECTED }))
-          (print {
-            event: "settle",
-            briefDate: briefDate,
-            outcome: "rejected",
-            yesWeight: (get yesWeight brief),
-            noWeight: (get noWeight brief),
-            bondBurned: bond,
-          })
-          (ok STATUS_REJECTED)
-        )
-        ;; SETTLED. Pay every correspondent, then the proposer's fee.
-        (begin
-          (asserts! (> perSignal u0) ERR_DUST_DRAW)
-          ;; Mark terminal BEFORE paying: effects before interaction, and the
-          ;; week can never be re-proposed or re-settled.
-          (map-set Briefs briefDate (merge brief { status: STATUS_SETTLED }))
-          (asserts!
-            (get ok (fold pay-entry entries {
-              briefDate: briefDate,
-              perSignal: perSignal,
-              ok: true,
-            }))
-            ERR_PAYOUT_FAILED
-          )
-          ;; Proposer fee, keyed with `fee-ref`, whose tuple shape differs from
-          ;; an entry's so collision is structurally impossible.
-          (and (> fee u0)
-            (unwrap!
-              (contract-call? .news-treasury execute-payout proposer fee
-                (fee-ref briefDate proposer)
-              )
-              ERR_PAYOUT_FAILED
-            ))
-          (print {
-            event: "settle",
-            briefDate: briefDate,
-            outcome: "settled",
-            draw: draw,
-            proposerFee: fee,
-            perSignal: perSignal,
-            totalSignals: (get totalSignals brief),
-            entryCount: (get entryCount brief),
-            yesWeight: (get yesWeight brief),
-            noWeight: (get noWeight brief),
-          })
-          (ok STATUS_SETTLED)
-        )
-      )
+      ERR_TOO_EARLY
     )
+
+    (release-bond proposer bond)
+    (match (get challenger brief)
+      c (release-bond c bond)
+      true
+    )
+
+    (if overturned
+      ;; OVERTURNED. The challenger was right. Nobody is paid, the proposer's
+      ;; bond transfers to the challenger, and the week reopens for someone
+      ;; else to submit correctly.
+      (begin
+        (match (get challenger brief)
+          c (transfer-bond proposer c bond)
+          true
+        )
+        (map-set ProposeCooldownUntil proposer (+ stacks-block-height CHALLENGE_WINDOW))
+        (map-set Briefs briefDate (merge brief { status: STATUS_OVERTURNED }))
+        (print {
+          event: "settle",
+          briefDate: briefDate,
+          outcome: "overturned",
+          challenger: (get challenger brief),
+          overturnWeight: (get overturnWeight brief),
+          upholdWeight: (get upholdWeight brief),
+          bondTransferred: bond,
+        })
+        (ok STATUS_OVERTURNED)
+      )
+      ;; SETTLED. Either nobody objected, or the challenge failed. Pay every
+      ;; correspondent, then the proposer's fee. If there was a failed
+      ;; challenge, the challenger's bond transfers to the proposer.
+      (begin
+        (asserts! (> perSignal u0) ERR_DUST_DRAW)
+        (match (get challenger brief)
+          c (transfer-bond c proposer bond)
+          true
+        )
+        ;; Mark terminal BEFORE paying: effects before interaction, and the week
+        ;; can never be re-proposed or re-settled.
+        (map-set Briefs briefDate (merge brief { status: STATUS_SETTLED }))
+        (asserts!
+          (get ok (fold pay-entry entries {
+            briefDate: briefDate,
+            perSignal: perSignal,
+            ok: true,
+          }))
+          ERR_PAYOUT_FAILED
+        )
+        (and (> fee u0)
+          (unwrap!
+            (contract-call? .news-treasury execute-payout proposer fee
+              (fee-ref briefDate proposer)
+            )
+            ERR_PAYOUT_FAILED
+          ))
+        (print {
+          event: "settle",
+          briefDate: briefDate,
+          outcome: "settled",
+          challenged: (is-some (get challenger brief)),
+          draw: draw,
+          proposerFee: fee,
+          perSignal: perSignal,
+          totalSignals: (get totalSignals brief),
+          entryCount: (get entryCount brief),
+        })
+        (ok STATUS_SETTLED)
+      )
     )
   )
 )

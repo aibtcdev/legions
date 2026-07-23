@@ -1,9 +1,9 @@
-# Testnet runbook, aibtc.news Legion
+# Testnet runbook, aibtc.news Legion (optimistic settlement)
 
 Full lifecycle on Stacks testnet using the existing `legion-agent-*` wallets.
 Timing is the TEST build (`get-timing-mode` returns `"TEST-STACKS-BLOCKS"`), so
-a complete `propose -> vote -> veto window -> settle` takes about **two hours**
-rather than eight days.
+an unchallenged week takes about **90 minutes** rather than a week, and a
+challenged one about three hours.
 
 ## Cast
 
@@ -11,9 +11,9 @@ rather than eight days.
 |---|---|---|
 | agent-05 | `ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW` | deployer, and largest contributor |
 | agent-01 | `STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J` | contributor, proposes |
-| agent-02 | `ST38Y96G7WHWSWY7JTE3DVM77EBCA86WX63HY9HPV` | contributor, votes yes |
-| agent-03 | `STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5` | contributor, votes yes |
-| agent-04 | `ST2KVMAENJ1V64YKT722HNQRPRR0W1A4JDA8KW8A4` | contributor, vetoes in week two |
+| agent-02 | `ST38Y96G7WHWSWY7JTE3DVM77EBCA86WX63HY9HPV` | contributor, votes in disputes |
+| agent-03 | `STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5` | contributor, votes in disputes |
+| agent-04 | `ST2KVMAENJ1V64YKT722HNQRPRR0W1A4JDA8KW8A4` | contributor, challenges in week two |
 | agent-07 | `ST34Q5MVC410NTEK8G00G2QZ1JTBB2WJTNABTE6RA` | correspondent, 30 signals |
 | agent-08 | `ST1QQ1NJMM3MH73X2W2DD7K9K2G9CHW00D9FVX7PD` | correspondent, 20 signals |
 
@@ -89,24 +89,24 @@ agent holds 20% of the vote.
 
 `quote-weight` tells an agent what a contribution would buy before sending it.
 
-## 3. Week one, the happy path
+## 3. Week one, the happy path: nobody votes
 
-**agent-01 proposes.** Entries are `{recipient, signals}`, one row per
+**agent-01 submits the week.** Entries are `{recipient, signals}`, one row per
 correspondent; duplicates are rejected.
 
 ```clarity
 (contract-call? .news-gov propose-brief
   "2026-07-20"
-  (list 0x33edd63e)                    ;; inscription id(s), opaque to the contract
+  (list 0x33edd63e)
   (list {recipient: 'ST34Q5MVC410NTEK8G00G2QZ1JTBB2WJTNABTE6RA, signals: u30}
         {recipient: 'ST1QQ1NJMM3MH73X2W2DD7K9K2G9CHW00D9FVX7PD, signals: u20}))
 ```
 
-Expected numbers at a 50,000,000 pool:
+At a 50,000,000 pool:
 
 ```
 draw        = 0.5% of 50,000,000    = 250,000
-bond        = max(10,000, 5bps of 50,000,000 = 25,000) = 25,000  (weight)
+bond        = 5bps of total weight  =  25,000  (weight, locked from agent-01)
 fee         = 1% of draw            =   2,500
 distributable                       = 247,500
 per signal  = 247,500 / 50          =   4,950
@@ -114,70 +114,68 @@ agent-07    = 30 x 4,950            = 148,500
 agent-08    = 20 x 4,950            =  99,000
 ```
 
-Confirm with `locked-of(agent-01)` giving `25,000`.
-
-**agents 02 and 03 vote yes**, within 144 blocks:
+**Then do nothing.** No votes, no confirmations. Wait out 144 blocks (~90 min)
+and check:
 
 ```clarity
-(contract-call? .news-gov vote "2026-07-20" true)
+(contract-call? .news-gov can-settle "2026-07-20")   ;; true
+(contract-call? .news-gov settle "2026-07-20")        ;; (ok u1) SETTLED
 ```
 
-Quorum: eligible is 50,000,000 minus agent-01's 10,000,000 (the proposer is
-excluded) = 40,000,000. Cast 20,000,000 = 50%, past the 15% floor. Two distinct
-voters. Yes is 100%, past 66%. Passes.
+Verify: agent-07 `+148,500`, agent-08 `+99,000`, agent-01 `+2,500` fee, pool
+down by exactly the draw, `get-total-weight` unchanged, `locked-of(agent-01)`
+back to `0`.
 
-**Failures worth firing once each:**
+**This is the whole point.** Zero governance transactions between propose and
+settle.
+
+Failures worth firing once:
 
 | Call | Expected |
 |---|---|
-| agent-01 votes on its own week | `u423` |
-| agent-07 contributes then votes on this week | `u406` |
-| agent-02 votes twice | `u405` |
-| `settle` before the veto window closes | `u408` |
+| `settle` before the window closes | `u408` |
+| `vote` with no challenge open | `u429` |
+| agent-01 challenges its own week | `u430` |
+| `challenge` after the window closes | `u428` |
 
-**Wait out 144 + 48 blocks (~2 hours), then anyone settles:**
+## 4. Week two: a challenge that succeeds
 
-```clarity
-(contract-call? .news-gov settle "2026-07-20")   ;; (ok u1) SETTLED
-```
-
-Verify: agent-07 `+148,500` sBTC, agent-08 `+99,000`, agent-01 `+2,500` fee,
-treasury `get-balance` down by exactly the draw, **`get-total-weight` unchanged**
-(payouts never touch anyone's voting rights), `locked-of(agent-01)` back to `0`,
-and `is-paid` true for each `payout-ref("2026-07-20", recipient)`.
-
-Re-calling `settle`, or re-proposing that week, returns `u410`. Terminal.
-
-## 4. Week two, the veto path
-
-Same propose and yes-votes for `"2026-07-27"`. Then, **after voting closes and
-inside the 48-block veto window**, agent-04 objects:
+Propose `"2026-07-27"` from agent-01, then **inside the challenge window**
+agent-04 objects, posting a matching bond:
 
 ```clarity
-(contract-call? .news-gov veto "2026-07-27")
+(contract-call? .news-gov challenge "2026-07-27")
 ```
 
-agent-04 holds 10,000,000 of 40,000,000 eligible = 25%, past the 15% needed.
+Settlement is now frozen past the original deadline. agents 02 and 03 vote to
+overturn:
 
 ```clarity
-(contract-call? .news-gov settle "2026-07-27")   ;; (ok u4) VETOED
+(contract-call? .news-gov vote "2026-07-27" true)
 ```
 
-Verify: nobody paid, pool unchanged, agent-01's **bond returned in full**
-(`get-weight` still 10,000,000), and agent-01 in cooldown, so
-`get-propose-cooldown(agent-01)` is a future height. **agent-02 can propose the
-reopened week immediately**, since the bar is on the principal, not the slot.
-
-## 5. Week three, rejection burns weight
-
-Propose, then have agents 02 and 03 split their votes so yes falls under 66%.
+After the dispute window:
 
 ```clarity
-(contract-call? .news-gov settle "2026-08-03")   ;; (ok u2) REJECTED
+(contract-call? .news-gov settle "2026-07-27")   ;; (ok u2) OVERTURNED
 ```
 
-Verify: nobody paid, **pool unchanged** (no sats move), and the proposer's
-`get-weight` reduced by the bond. The penalty is influence, not principal.
+Verify: nobody paid, pool unchanged, **agent-01's bond weight moved to
+agent-04** (`get-weight` on both), `get-total-weight` unchanged since it is a
+transfer not a burn, and agent-01 in cooldown. agent-02 can propose the reopened
+week immediately.
+
+## 5. Week three: a challenge that fails
+
+Same setup, but let the dispute window pass with **nobody voting**.
+
+```clarity
+(contract-call? .news-gov settle "2026-08-03")   ;; (ok u1) SETTLED
+```
+
+Verify: correspondents paid as normal, and **agent-04's bond weight moved to
+agent-01**. The proposal stands by default, so a cheap objection cannot freeze a
+week nobody actually disputes, and the challenger pays for trying.
 
 ## 6. Share-of-balance, worth seeing once
 
@@ -193,8 +191,7 @@ is now in the pool. `quote-weight` predicts this before sending.
   from the treasury to each recipient, and every amount is computable in advance
   from `get-balance` and the entry list.
 - **Timing**: testnet Stacks blocks have run ~37s in this project's past
-  deploys, so 192 blocks is roughly two hours. If that is too slow to iterate,
-  drop `VOTE_WINDOW` to 72 and `VETO_WINDOW` to 24 and redeploy for about an
-  hour.
+  deploys, so 144 blocks is roughly 90 minutes. Halve both windows if that is
+  still too slow to iterate.
 - **This build is not mainnet-safe.** Test timing is live and the sBTC principal
   is testnet. See the README's production checklist.
