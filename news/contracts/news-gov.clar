@@ -46,8 +46,9 @@
 ;;
 ;; Counting is on STACKS blocks, not burn (Bitcoin) blocks, and the windows are
 ;; short, so a full propose -> vote -> veto -> settle lifecycle completes in
-;; about two hours on testnet instead of eight days. That makes it possible to
-;; exercise SETTLED, VETOED, REJECTED and EXPIRED several times in a day.
+;; about 30 minutes on testnet instead of eight days, and the whole runbook
+;; (settle, veto, reject) in about 90 minutes. That makes it possible to iterate
+;; several times in a day rather than proving it once.
 ;;
 ;; PRODUCTION: set VOTE_WINDOW to u1008 and VETO_WINDOW to u144, and switch
 ;; every height reference in this contract back to `burn-block-height`. One
@@ -58,7 +59,7 @@
 ;; `get-timing-mode` returns "TEST-STACKS-BLOCKS" so a deployed instance can be
 ;; queried for which build it is. A production build must return "PROD-BURN".
 ;; ///////////////////////////////////////////////////////////////////////////
-(define-constant VOTE_WINDOW u144)
+(define-constant VOTE_WINDOW u36)
 
 ;; Objection window, opening when voting closes and running until settlement is
 ;; allowed. A week that passed its vote can still be stopped here.
@@ -68,7 +69,7 @@
 ;; VETO_QUORUM of ELIGIBLE weight. In practice that moves the bar for pushing a
 ;; week through unopposed from roughly two thirds of turnout to roughly six
 ;; sevenths of the whole electorate.
-(define-constant VETO_WINDOW u48)
+(define-constant VETO_WINDOW u12)
 (define-constant VETO_QUORUM u15) ;; % of eligible weight needed to block
 
 ;; Percentage of CAST weight that must be yes for a week to pass.

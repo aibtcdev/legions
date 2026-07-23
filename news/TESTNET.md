@@ -2,8 +2,8 @@
 
 Full lifecycle on Stacks testnet using the existing `legion-agent-*` wallets.
 Timing is the TEST build (`get-timing-mode` returns `"TEST-STACKS-BLOCKS"`), so
-a complete `propose -> vote -> veto window -> settle` takes about **two hours**
-rather than eight days.
+a complete `propose -> vote -> veto window -> settle` takes about **30 minutes**
+rather than eight days, and the full runbook below about 90 minutes.
 
 ## Cast
 
@@ -135,7 +135,7 @@ voters. Yes is 100%, past 66%. Passes.
 | agent-02 votes twice | `u405` |
 | `settle` before the veto window closes | `u408` |
 
-**Wait out 144 + 48 blocks (~2 hours), then anyone settles:**
+**Wait out 36 + 12 blocks (~30 min), then anyone settles:**
 
 ```clarity
 (contract-call? .news-gov settle "2026-07-20")   ;; (ok u1) SETTLED
@@ -193,8 +193,9 @@ is now in the pool. `quote-weight` predicts this before sending.
   from the treasury to each recipient, and every amount is computable in advance
   from `get-balance` and the entry list.
 - **Timing**: testnet Stacks blocks have run ~37s in this project's past
-  deploys, so 192 blocks is roughly two hours. If that is too slow to iterate,
-  drop `VOTE_WINDOW` to 72 and `VETO_WINDOW` to 24 and redeploy for about an
-  hour.
+  deploys, so a 48-block lifecycle is roughly 30 minutes.
+- **One proposal at a time.** `PROPOSE_INTERVAL` (48 blocks) is contract-wide,
+  so week two cannot be proposed until week one has fully resolved. Read
+  `get-next-propose-height` rather than guessing.
 - **This build is not mainnet-safe.** Test timing is live and the sBTC principal
   is testnet. See the README's production checklist.

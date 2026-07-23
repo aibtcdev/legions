@@ -20,8 +20,8 @@ const govPrincipal = `${deployer}.${GOV}`;
 const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
 
 // Must match news-gov.clar.
-const VOTE_WINDOW = 144; // TEST TIMING: stacks blocks
-const VETO_WINDOW = 48;
+const VOTE_WINDOW = 36; // TEST TIMING: stacks blocks
+const VETO_WINDOW = 12;
 const MIN_WEIGHT = 10_000;
 
 const WEEK = "2026-07-20";

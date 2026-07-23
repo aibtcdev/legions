@@ -19,9 +19,9 @@ No roles, no rates to administer, no operator, no oracle.
    propose-brief(week, inscriptions,         │
                  entries) + bond             │
               │                              │
-   144 blocks voting (TEST TIMING)           │
+   36 blocks voting (TEST TIMING)            │
               │                              │
-   48 blocks veto window                     │
+   12 blocks veto window                     │
               │                              │
    ┌──────┬───┴────┬──────────┬────────┐     ▼
    ▼      ▼        ▼          ▼           draw = 0.5% of pool,
@@ -130,13 +130,13 @@ parameter; the only vote is yes or no on a week.
 
 | Constant | Value | |
 |---|---|---|
-| `VOTE_WINDOW` | 144 stacks blocks | TEST TIMING, production is 1008 burn blocks |
-| `VETO_WINDOW` | 48 blocks | objection window after voting closes |
+| `VOTE_WINDOW` | 36 stacks blocks | TEST TIMING, production is 1008 burn blocks |
+| `VETO_WINDOW` | 12 blocks | objection window after voting closes |
 | `VOTING_THRESHOLD` | 66% | of cast weight |
 | `VOTING_QUORUM` | 15% | of eligible weight |
 | `VETO_QUORUM` | 15% | of eligible weight needed to block |
 | `MIN_PARTICIPANTS` | 2 | distinct voters |
-| `PROPOSE_INTERVAL` | 192 blocks | **global**: one proposal at a time, whoever sends it |
+| `PROPOSE_INTERVAL` | 48 blocks | **global**: one proposal at a time, whoever sends it |
 | `MIN_WEIGHT` | 10,000 | floor to propose or vote |
 | `DRAW_BPS` | 50 (0.5%) | of the pool, per approved week |
 | `BOND_BPS` | 5 | of total weight, the proposal bond |
@@ -233,8 +233,8 @@ a third of the pool.
 ## This build is timed for testing, not production
 
 Counting is on **Stacks blocks**, not burn (Bitcoin) blocks, and the windows are
-short. A full `propose -> vote -> veto -> settle` completes in about two hours
-on testnet instead of eight days.
+short. A full `propose -> vote -> veto -> settle` completes in about 30 minutes on
+testnet instead of eight days, and the whole runbook in about 90 minutes.
 
 ```clarity
 (contract-call? .news-gov get-timing-mode)   ;; => "TEST-STACKS-BLOCKS"
@@ -242,7 +242,7 @@ on testnet instead of eight days.
 
 A production build must return `"PROD-BURN"`. To produce one:
 
-1. `VOTE_WINDOW` to `u1008`, `VETO_WINDOW` to `u144`
+1. `VOTE_WINDOW` to `u1008`, `VETO_WINDOW` to `u144` (`PROPOSE_INTERVAL` follows)
 2. every `stacks-block-height` in `news-gov.clar` to `burn-block-height`
 3. `get-timing-mode` to `"PROD-BURN"`
 4. re-run the suite with `mineEmptyBurnBlocks` in place of `mineEmptyBlocks`
