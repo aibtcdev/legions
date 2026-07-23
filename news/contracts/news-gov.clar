@@ -83,6 +83,31 @@
 ;; Distinct voters required regardless of weight.
 (define-constant MIN_PARTICIPANTS u2)
 
+;; GLOBAL rate limit on proposals: the whole contract accepts one every
+;; PROPOSE_INTERVAL blocks, whoever sends it. Set to a full week lifecycle so
+;; weeks are strictly serialized -- one resolves completely before the next can
+;; be opened.
+;;
+;; Without this, nothing bounded how many weeks could be open at once. Week keys
+;; are strings that pass a shape check, so "2027-01-01" is proposable today, and
+;; the only cost was a bond of 5 bps of total weight. A proposer holding a third
+;; of the weight could carry several hundred concurrent proposals.
+;;
+;; That mattered two ways. Each open week is a slot nobody else can propose, so
+;; bulk-proposing pre-empts legitimate submissions for a full window each. And
+;; every week that settles draws another 0.5%, so hundreds settling together
+;; would take a large fraction of the pool inside a single window rather than
+;; the 0.5% per week the economics are sized against: twenty weeks is ~9.5%, a
+;; hundred is ~39%.
+;;
+;; A per-principal cap would not close it, because an attacker rotates accounts.
+;; The per-principal proposer cooldown below closes only the sequential form
+;; (propose, expire, re-propose); it does not stop bulk pre-emption up front.
+;;
+;; KEEP THIS >= VOTE_WINDOW + VETO_WINDOW. If it is shorter, weeks overlap and
+;; the drain rate multiplies by the ratio.
+(define-constant PROPOSE_INTERVAL (+ VOTE_WINDOW VETO_WINDOW))
+
 ;; Weight floor to propose or vote.
 (define-constant MIN_WEIGHT u10000)
 
@@ -143,6 +168,7 @@
 (define-constant ERR_VETO_WINDOW (err u424)) ;; veto outside [voteEnd, vetoEnd)
 (define-constant ERR_ALREADY_VETOED (err u425)) ;; one veto per principal per week
 (define-constant ERR_DUST_CONTRIBUTION (err u426)) ;; too small to mint any weight
+(define-constant ERR_PROPOSE_TOO_SOON (err u432)) ;; another proposal is too recent
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -181,6 +207,9 @@
   principal
   uint
 )
+
+;; Height of the most recent proposal, by anyone. Enforces PROPOSE_INTERVAL.
+(define-data-var LastProposeAt uint u0)
 
 ;; One week per date. REJECTED, EXPIRED and VETOED clear the way for a
 ;; re-proposal; SETTLED is terminal.
@@ -271,6 +300,15 @@
       u0
       (- held locked)
     )
+  )
+)
+
+;; Earliest height at which the contract will accept another proposal from
+;; anyone. Lets an agent wait rather than burn a transaction on the error.
+(define-read-only (get-next-propose-height)
+  (if (is-eq (var-get LastProposeAt) u0)
+    u0 ;; nothing proposed yet, the contract is open
+    (+ (var-get LastProposeAt) PROPOSE_INTERVAL)
   )
 )
 
@@ -557,10 +595,16 @@
       (>= stacks-block-height (get-propose-cooldown tx-sender))
       ERR_PROPOSE_COOLDOWN
     )
+    ;; One proposal at a time, contract-wide.
+    (asserts!
+      (>= stacks-block-height (get-next-propose-height))
+      ERR_PROPOSE_TOO_SOON
+    )
     ;; Only a contributor may propose, and their free weight must cover the bond.
     (asserts! (>= proposerWeight MIN_WEIGHT) ERR_INELIGIBLE)
     (asserts! (>= proposerWeight (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
 
+    (var-set LastProposeAt stacks-block-height)
     (map-set LockedWeight tx-sender (+ alreadyLocked bond))
     (map-set BriefEntries briefDate entries)
     (map-set BriefRecipients briefDate (get seen entryCheck))

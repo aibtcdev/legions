@@ -483,11 +483,6 @@ describe("veto blocks a week that would otherwise pass", () => {
     closeVoting();
   });
 
-  it("refuses a veto before voting closes", () => {
-    expect(propose(voter1, "2026-07-27").result).toBeOk(Cl.stringAscii("2026-07-27"));
-    expect(veto(voter2, "2026-07-27").result).toBeErr(Cl.uint(424));
-  });
-
   it("refuses a second veto from the same principal", () => {
     expect(veto(voter1).result).toBeOk(Cl.bool(true));
     expect(veto(voter1).result).toBeErr(Cl.uint(425));
@@ -521,6 +516,47 @@ describe("veto blocks a week that would otherwise pass", () => {
     const aBefore = sbtcOf(corrA);
     expect(settle().result).toBeOk(Cl.uint(1)); // SETTLED
     expect(sbtcOf(corrA)).toBeGreaterThan(aBefore);
+  });
+});
+
+describe("veto timing", () => {
+  it("refuses a veto while voting is still open", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(veto(voter1).result).toBeErr(Cl.uint(424));
+  });
+});
+
+describe("one proposal at a time, contract-wide", () => {
+  // Week keys are just shape-checked strings, so "2027-01-01" is proposable
+  // today. Without a global interval, one principal could open hundreds of
+  // weeks: each is a slot nobody else can propose, and each that settles draws
+  // another 0.5%. A per-principal cap would not close it, since an attacker
+  // rotates accounts.
+  beforeEach(() => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+  });
+
+  it("refuses a second proposal from anyone before the interval elapses", () => {
+    expect(propose(voter1, "2026-07-27").result).toBeErr(Cl.uint(432));
+    expect(propose(voter2, "2027-01-01").result).toBeErr(Cl.uint(432));
+  });
+
+  it("blocks bulk pre-emption of future weeks", () => {
+    for (const week of ["2026-08-03", "2026-08-10", "2026-08-17"]) {
+      expect(propose(proposer, week).result).toBeErr(Cl.uint(432));
+    }
+  });
+
+  it("accepts the next proposal once the interval elapses", () => {
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + 1);
+    expect(propose(voter1, "2026-07-27").result).toBeOk(Cl.stringAscii("2026-07-27"));
+  });
+
+  it("reports when the next proposal will be accepted", () => {
+    const r = simnet.callReadOnlyFn(GOV, "get-next-propose-height", [], deployer);
+    expect((r.result as any).value).toBeGreaterThan(0n);
   });
 });
 

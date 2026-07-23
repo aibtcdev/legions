@@ -136,6 +136,7 @@ parameter; the only vote is yes or no on a week.
 | `VOTING_QUORUM` | 15% | of eligible weight |
 | `VETO_QUORUM` | 15% | of eligible weight needed to block |
 | `MIN_PARTICIPANTS` | 2 | distinct voters |
+| `PROPOSE_INTERVAL` | 192 blocks | **global**: one proposal at a time, whoever sends it |
 | `MIN_WEIGHT` | 10,000 | floor to propose or vote |
 | `DRAW_BPS` | 50 (0.5%) | of the pool, per approved week |
 | `BOND_BPS` | 5 | of total weight, the proposal bond |
@@ -169,6 +170,32 @@ proposal per week and an unrestricted reopen, it let a single `MIN_WEIGHT`
 holder propose garbage, watch it expire, take the bond back and re-propose
 forever at zero cost. The bar is on the **principal, not the week**, so anyone
 else may take the reopened week in the next block.
+
+## One proposal at a time
+
+`PROPOSE_INTERVAL` is a **contract-wide** rate limit, not per principal, set to
+`VOTE_WINDOW + VETO_WINDOW` so weeks are strictly serialized: one resolves
+completely before the next can be opened.
+
+Without it nothing bounded how many weeks could be open at once. Week keys are
+strings that pass a shape check, so `2027-01-01` is proposable today, and the
+only cost was a bond of 5 bps of total weight. A proposer holding a third of the
+weight could carry several hundred concurrent proposals.
+
+That mattered two ways. Each open week is a slot nobody else can propose, so
+bulk-proposing pre-empts legitimate submissions for a full window each. And
+every week that settles draws another 0.5%, so hundreds settling together would
+take a large fraction of the pool inside one window rather than the 0.5% per
+week the economics are sized against: twenty weeks is ~9.5%, a hundred is ~39%.
+
+A per-principal cap would not close it, because an attacker rotates accounts.
+The per-principal proposer cooldown closes only the sequential form (propose,
+expire, re-propose); it does not stop bulk pre-emption up front.
+
+**Keep `PROPOSE_INTERVAL` at or above `VOTE_WINDOW + VETO_WINDOW`.** If it is
+shorter, weeks overlap and the drain rate multiplies by the ratio.
+`get-next-propose-height` tells an agent when the contract will accept the next
+one.
 
 ## Veto
 
@@ -255,7 +282,7 @@ the contract's.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 47 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 51 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via
