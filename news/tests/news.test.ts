@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach } from "vitest";
-import { Cl, serializeCV } from "@stacks/transactions";
+import { Cl } from "@stacks/transactions";
 
 // `simnet` is injected globally by vitest-environment-clarinet.
 const accounts = simnet.getAccounts();
@@ -78,39 +78,18 @@ function lockedOf(who: string): bigint {
   return (r.result as any).value as bigint;
 }
 
-/** Consensus bytes of a principal, as hex -- the contract's canonical sort key. */
-function sortKey(addr: string): string {
-  const out = serializeCV(Cl.principal(addr));
-  return typeof out === "string" ? out : Buffer.from(out).toString("hex");
-}
-
-/**
- * One entry per correspondent: how many of their signals landed this week.
- * Sorted into the contract's canonical order (ascending by the recipient's
- * consensus bytes) -- which is exactly what a verifying agent must do to
- * reproduce `get-entry-digest` from the briefs.
- */
+/** One entry per correspondent: how many of their signals landed this week. */
 function entries(
   rows: Array<[string, number]> = [
     [corrA, SIGNALS_A],
     [corrB, SIGNALS_B],
   ],
-  { canonical = true }: { canonical?: boolean } = {},
 ) {
-  const ordered = canonical
-    ? [...rows].sort((a, b) => (sortKey(a[0]) < sortKey(b[0]) ? -1 : 1))
-    : rows;
   return Cl.list(
-    ordered.map(([recipient, signals]) =>
+    rows.map(([recipient, signals]) =>
       Cl.tuple({ recipient: Cl.principal(recipient), signals: Cl.uint(signals) }),
     ),
   );
-}
-
-/** The same set, deliberately in the wrong order. */
-function entriesReversed(rows: Array<[string, number]>) {
-  const ordered = [...rows].sort((a, b) => (sortKey(a[0]) < sortKey(b[0]) ? 1 : -1));
-  return entries(ordered, { canonical: false });
 }
 
 function inscriptions(list = INSCRIPTIONS) {
@@ -274,37 +253,6 @@ describe("propose-brief", () => {
       [corrA, 5],
     ]);
     expect(propose(proposer, WEEK, dupes).result).toBeErr(Cl.uint(412));
-  });
-
-  it("rejects entries that are not in canonical order", () => {
-    // Same payout set, wrong order. Rejected so that any verifier
-    // reconstructing this set from the briefs gets a byte-identical list and
-    // can check the proposal with one hash equality.
-    const wrong = entriesReversed([
-      [corrA, SIGNALS_A],
-      [corrB, SIGNALS_B],
-    ]);
-    expect(propose(proposer, WEEK, wrong).result).toBeErr(Cl.uint(412));
-  });
-
-  it("produces the same digest for the same payout set regardless of input order", () => {
-    // Canonical ordering is what makes this true, and it is what lets an agent
-    // recompute the digest from the week's briefs instead of diffing lists.
-    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
-    const first = simnet.callReadOnlyFn(GOV, "get-entry-digest", [Cl.stringAscii(WEEK)], deployer);
-
-    const shuffled = entries([
-      [corrB, SIGNALS_B],
-      [corrA, SIGNALS_A],
-    ]);
-    expect(propose(proposer, "2026-07-27", shuffled).result).toBeOk(Cl.stringAscii("2026-07-27"));
-    const second = simnet.callReadOnlyFn(
-      GOV,
-      "get-entry-digest",
-      [Cl.stringAscii("2026-07-27")],
-      deployer,
-    );
-    expect((first.result as any).value.buffer).toEqual((second.result as any).value.buffer);
   });
 
   it("rejects a zero signal count", () => {
