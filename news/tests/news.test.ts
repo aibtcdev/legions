@@ -113,8 +113,15 @@ function propose(who = proposer, week = WEEK, list = entries()) {
   );
 }
 
-function challenge(who = challenger, week = WEEK) {
-  return simnet.callPublicFn(GOV, "challenge", [Cl.stringAscii(week)], who);
+const REASON = "agent-07 shows 30 signals, the briefs show 12";
+
+function challenge(who = challenger, week = WEEK, reason = REASON) {
+  return simnet.callPublicFn(
+    GOV,
+    "challenge",
+    [Cl.stringAscii(week), Cl.stringAscii(reason)],
+    who,
+  );
 }
 
 function vote(who: string, overturn: boolean, week = WEEK) {
@@ -250,6 +257,26 @@ describe("challenge", () => {
 
   it("refuses a challenger with no weight", () => {
     expect(challenge(outsider).result).toBeErr(Cl.uint(401));
+  });
+
+  it("requires the challenger to say what is wrong", () => {
+    // Voters cannot verify an unstated claim. Without a reason, every voter has
+    // to independently reverse-engineer the objection.
+    expect(challenge(challenger, WEEK, "").result).toBeErr(Cl.uint(431));
+  });
+
+  it("records the objection for voters to check", () => {
+    expect(challenge().result).toBeOk(Cl.bool(true));
+    const r = simnet.callReadOnlyFn(
+      GOV,
+      "get-challenge",
+      [Cl.stringAscii(WEEK)],
+      deployer,
+    );
+    // Shape-agnostic: assert the record round-trips both fields.
+    const dump = Cl.prettyPrint(r.result as any);
+    expect(dump).toContain(REASON);
+    expect(dump).toContain(challenger);
   });
 });
 

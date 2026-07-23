@@ -145,7 +145,7 @@ correspondent in their own week. That case is tested.
 |---|---|---|
 | `contribute(amount)` | anyone | fund the pool, receive weight |
 | `propose-brief(week, inscriptions, entries)` | contributor | submit a week, open the challenge window |
-| `challenge(week)` | contributor | object, posting a matching bond |
+| `challenge(week, reason)` | contributor | object, posting a matching bond and saying what is wrong |
 | `vote(week, overturn)` | contributor | **disputes only**, decide who was right |
 | `settle(week)` | **anyone** | pay out, or resolve the dispute |
 
@@ -166,6 +166,7 @@ parameter; the only vote is yes or no on a week.
 | `OVERTURN_THRESHOLD` | 66% | of cast weight needed to reverse a proposal |
 | `DISPUTE_QUORUM` | 15% | of eligible weight, else the proposal stands |
 | `MIN_PARTICIPANTS` | 2 | distinct voters in a dispute |
+| `PROPOSE_INTERVAL` | 144 blocks | **global**: one proposal at a time, whoever sends it |
 | `MIN_WEIGHT` | 10,000 | floor to propose or vote |
 | `DRAW_BPS` | 50 (0.5%) | of the pool, per approved week |
 | `BOND_BPS` | 5 | of total weight, the proposal bond |
@@ -195,6 +196,37 @@ sats move either, because there is nowhere for them to go.
 After losing a dispute the proposer sits out one window before proposing
 anything again. The bar is on the **principal, not the week**, so anyone else
 may take the reopened week in the next block.
+
+## One proposal at a time
+
+`PROPOSE_INTERVAL` is a **contract-wide** rate limit, not per principal.
+
+Without it nothing bounded how many weeks could be open at once. Week keys are
+strings that pass a shape check, so `2027-01-01` is proposable today, and the
+only cost was a bond of 5 bps of total weight. A proposer holding a third of the
+weight could carry several hundred concurrent proposals.
+
+That mattered two ways. Each open week is a slot nobody else can propose, so
+bulk-proposing pre-empts legitimate submissions for a full window each. And
+every week that settles draws another 0.5%, so hundreds settling together would
+take a large fraction of the pool inside a single window rather than the 0.5%
+per week the economics are sized against.
+
+A per-principal cap would not close it, because an attacker rotates accounts. A
+global interval does, and it costs legitimate use nothing: weeks arrive once a
+week and this permits one proposal per day. `get-next-propose-height` tells an
+agent when the contract will accept the next one.
+
+## A challenge has to say what is wrong
+
+`challenge` takes a `reason` (up to 256 ASCII), stored and readable via
+`get-challenge`. The contract never reads it; it exists for the voters.
+
+An objection with no stated reason forces every voter to independently work out
+what the challenger even thought was wrong, which is far more work than checking
+a specific claim and turns a dispute into a guessing game. Naming the defect,
+"agent-07 shows 30 signals, the briefs show 12", makes the vote a verification
+task instead. Empty reasons are rejected.
 
 ## Who may challenge, and who may vote
 
@@ -278,7 +310,7 @@ the contract's.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 40 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 42 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via

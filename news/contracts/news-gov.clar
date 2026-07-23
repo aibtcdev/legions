@@ -75,6 +75,25 @@
 ;; Distinct voters required in a dispute, regardless of weight.
 (define-constant MIN_PARTICIPANTS u2)
 
+;; GLOBAL rate limit on proposals: the whole contract accepts one every
+;; PROPOSE_INTERVAL blocks, whoever sends it.
+;;
+;; Without this, nothing bounded how many weeks could be open at once. Week keys
+;; are just strings that pass a shape check, so "2027-01-01" is proposable today,
+;; and the only cost was a bond of 5 bps of total weight. A proposer holding a
+;; third of the weight could carry several hundred concurrent proposals.
+;;
+;; That mattered two ways. Each open week is a slot nobody else can propose, so
+;; bulk-proposing pre-empts legitimate submissions for a full window each. And
+;; every week that settles draws another 0.5%, so hundreds settling together
+;; would take a large fraction of the pool inside a single window rather than
+;; the 0.5% per week the economics are sized against.
+;;
+;; A per-principal cap would not have closed it: an attacker rotates accounts.
+;; A global interval does, and it costs legitimate use nothing, because weeks
+;; arrive once a week and this permits one proposal per day.
+(define-constant PROPOSE_INTERVAL u144)
+
 ;; Weight floor to propose, challenge or vote.
 (define-constant MIN_WEIGHT u10000)
 
@@ -131,6 +150,8 @@
 (define-constant ERR_CHALLENGE_CLOSED (err u428)) ;; challenge after the window
 (define-constant ERR_NOT_CHALLENGED (err u429)) ;; voting with no dispute open
 (define-constant ERR_SELF_CHALLENGE (err u430)) ;; proposer challenging their own week
+(define-constant ERR_EMPTY_REASON (err u431)) ;; a challenge must say what is wrong
+(define-constant ERR_PROPOSE_TOO_SOON (err u432)) ;; another proposal is too recent
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -160,6 +181,9 @@
   principal
   uint
 )
+
+;; Height of the most recent proposal, by anyone. Enforces PROPOSE_INTERVAL.
+(define-data-var LastProposeAt uint u0)
 
 ;; One week per date. OVERTURNED clears the way for a re-proposal; SETTLED is
 ;; terminal.
@@ -199,6 +223,24 @@
 (define-map BriefRecipients
   (string-ascii 10)
   (list 30 principal)
+)
+
+;; What a challenger says is wrong, recorded alongside the challenge.
+;;
+;; The contract never reads this: it is for the voters. A challenge with no
+;; stated reason forces every voter to independently work out what the objection
+;; even was, which is far more work than checking a specific claim, and turns a
+;; dispute into a guessing game. Naming the defect ("agent-07 shows 30 signals,
+;; the briefs show 12") makes the vote a verification task instead.
+;;
+;; 256 ASCII is enough for a concrete claim or a URL to a longer writeup.
+(define-map ChallengeReason
+  (string-ascii 10)
+  {
+    challenger: principal,
+    reason: (string-ascii 256),
+    at: uint,
+  }
 )
 
 (define-map Votes
@@ -241,6 +283,15 @@
       u0
       (- held locked)
     )
+  )
+)
+
+;; Earliest height at which the contract will accept another proposal from
+;; anyone. Lets an agent wait rather than burn a transaction on ERR_PROPOSE_TOO_SOON.
+(define-read-only (get-next-propose-height)
+  (if (is-eq (var-get LastProposeAt) u0)
+    u0 ;; nothing proposed yet, the contract is open
+    (+ (var-get LastProposeAt) PROPOSE_INTERVAL)
   )
 )
 
@@ -291,6 +342,12 @@
     )
     false
   )
+)
+
+;; The challenger, their stated objection, and when it was raised. This is what
+;; a voter should read before deciding a dispute.
+(define-read-only (get-challenge (briefDate (string-ascii 10)))
+  (map-get? ChallengeReason briefDate)
 )
 
 (define-read-only (get-vote-record
@@ -559,9 +616,15 @@
       (>= stacks-block-height (get-propose-cooldown tx-sender))
       ERR_PROPOSE_COOLDOWN
     )
+    ;; One proposal at a time, contract-wide.
+    (asserts!
+      (>= stacks-block-height (get-next-propose-height))
+      ERR_PROPOSE_TOO_SOON
+    )
     (asserts! (>= proposerWeight MIN_WEIGHT) ERR_INELIGIBLE)
     (asserts! (>= proposerWeight (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
 
+    (var-set LastProposeAt stacks-block-height)
     (map-set LockedWeight tx-sender (+ alreadyLocked bond))
     (map-set BriefEntries briefDate entries)
     (map-set BriefRecipients briefDate (get seen entryCheck))
@@ -610,7 +673,14 @@
 ;;
 ;; One challenge per week: the first objection is enough to force the question,
 ;; and a second adds nothing but another bond at risk.
-(define-public (challenge (briefDate (string-ascii 10)))
+;;
+;; `reason` states what is wrong, in the challenger's own words. The contract
+;; never reads it; it exists so voters can verify a specific claim rather than
+;; reverse-engineer the objection from scratch.
+(define-public (challenge
+    (briefDate (string-ascii 10))
+    (reason (string-ascii 256))
+  )
   (let (
       (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
       (bond (get bond brief))
@@ -622,10 +692,17 @@
     (asserts! (is-none (get challenger brief)) ERR_ALREADY_CHALLENGED)
     (asserts! (< stacks-block-height (get challengeEnd brief)) ERR_CHALLENGE_CLOSED)
     (asserts! (not (is-eq tx-sender (get proposer brief))) ERR_SELF_CHALLENGE)
+    ;; Say what is wrong. Voters cannot verify an unstated claim.
+    (asserts! (> (len reason) u0) ERR_EMPTY_REASON)
     (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
     (asserts! (>= weight (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
 
     (map-set LockedWeight tx-sender (+ alreadyLocked bond))
+    (map-set ChallengeReason briefDate {
+      challenger: tx-sender,
+      reason: reason,
+      at: stacks-block-height,
+    })
     (map-set Briefs briefDate
       (merge brief {
         challenger: (some tx-sender),
@@ -635,6 +712,7 @@
       event: "challenge",
       briefDate: briefDate,
       challenger: tx-sender,
+      reason: reason,
       bond: bond,
       disputeEnd: disputeEnd,
     })
