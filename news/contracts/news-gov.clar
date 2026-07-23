@@ -51,10 +51,15 @@
 ;; TEST TIMING. THIS BUILD IS NOT MAINNET-READY.
 ;;
 ;; Counting is on STACKS blocks, not burn (Bitcoin) blocks, and the windows are
-;; short, so a full propose -> vote -> veto -> settle lifecycle completes in
-;; about 30 minutes on testnet instead of eight days, and the whole runbook
-;; (settle, veto, reject) in about 90 minutes. That makes it possible to iterate
-;; several times in a day rather than proving it once.
+;; short. At ~100s per block measured on testnet:
+;;
+;;   propose -> vote closes      36 blocks   ~60 min
+;;   -> veto closes              12 blocks   ~20 min   (concludable from here)
+;;   -> conclude window closes   48 blocks   ~80 min   (lapsed after this)
+;;                               ---------
+;;   full lifecycle              96 blocks   ~2.7 hours
+;;
+;; against roughly eight days at production windows.
 ;;
 ;; PRODUCTION: set VOTE_WINDOW to u1008 and VETO_WINDOW to u144, and switch
 ;; every height reference in this contract back to `burn-block-height`. One
@@ -178,9 +183,9 @@
 (define-constant ERR_ALREADY_VOTED (err u405)) ;; one vote per principal per week
 (define-constant ERR_RECIPIENT_CANNOT_VOTE (err u406)) ;; named in the week under vote
 (define-constant ERR_VOTE_CLOSED (err u407)) ;; at/after voteEnd
-(define-constant ERR_VOTE_STILL_OPEN (err u408)) ;; settle before vetoEnd
+(define-constant ERR_VOTE_STILL_OPEN (err u408)) ;; conclude before vetoEnd
 (define-constant ERR_ZERO_AMOUNT (err u409)) ;; contribution must be > 0
-(define-constant ERR_BRIEF_SETTLED (err u410)) ;; terminal; can never be re-proposed
+(define-constant ERR_BRIEF_CONCLUDED (err u410)) ;; PASSED is terminal; never re-proposable
 (define-constant ERR_EMPTY_ENTRIES (err u411)) ;; a week must name at least one entry
 (define-constant ERR_BAD_ENTRIES (err u412)) ;; duplicate correspondent, or a zero signal count
 (define-constant ERR_INSUFFICIENT_BOND (err u413)) ;; free weight cannot cover the bond
@@ -674,7 +679,7 @@
     (match existing
       prev (begin
         (asserts! (not (is-eq (get status prev) STATUS_OPEN)) ERR_BRIEF_ALREADY_OPEN)
-        (asserts! (not (is-eq (get status prev) STATUS_PASSED)) ERR_BRIEF_SETTLED)
+        (asserts! (not (is-eq (get status prev) STATUS_PASSED)) ERR_BRIEF_CONCLUDED)
         true
       )
       true
@@ -840,7 +845,7 @@
       (vetoEnd (+ voteEnd VETO_WINDOW))
       (weight (get-weight tx-sender))
     )
-    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
+    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_CONCLUDED)
     (asserts! (>= stacks-block-height voteEnd) ERR_VETO_WINDOW)
     (asserts! (< stacks-block-height vetoEnd) ERR_VETO_WINDOW)
     (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
@@ -876,8 +881,14 @@
 ;; by anyone. Nobody has to be online, trusted, or available for correspondents
 ;; to get paid.
 ;;
-;; The draw is read at settle time, not at propose time, so a contribution that
-;; lands mid-vote raises that week's payout.
+;; The draw is FIXED AT PROPOSE TIME and stored on the brief, so a contribution
+;; landing mid-vote does not change this week's payout, and concluding late pays
+;; exactly what concluding early would.
+;;
+;; It used to be read here, from the live pool. That was exploitable: a passed
+;; week could be held and concluded later against a much larger pool, paying far
+;; more than anyone approved, and waiting was simply better than not waiting.
+;; Do not reintroduce it.
 (define-public (conclude (briefDate (string-ascii 10)))
   (let (
       (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
@@ -923,7 +934,7 @@
         (contract-call? .news-treasury get-balance)
       ))
     )
-    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
+    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_CONCLUDED)
     (asserts! (>= stacks-block-height (+ (get voteEnd brief) VETO_WINDOW)) ERR_VOTE_STILL_OPEN)
     ;; Release the proposer's bond in EVERY outcome. The bond is a lock, not a
     ;; penalty: it earmarks weight so one principal cannot back several open
