@@ -21,6 +21,8 @@ const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
 
 // Must match news-gov.clar.
 const VOTE_WINDOW = 144; // TEST TIMING: stacks blocks, ~1h on testnet
+const VETO_WINDOW = 48; // objection window after voting closes
+const EXIT_FEE_BPS = 1000; // 10% skimmed from stake on the way out
 const MIN_STAKE = 10_000;
 
 // The week's first brief date. Keyed per week, not per day.
@@ -131,8 +133,18 @@ function briefStatus(week = WEEK): bigint {
   return (r.result as any).value.value as bigint;
 }
 
-function closeWindow() {
+/** Past voteEnd, inside the veto window. */
+function closeVoting() {
   simnet.mineEmptyBlocks(VOTE_WINDOW + 1);
+}
+
+/** Past vetoEnd -- settle is now allowed. */
+function closeWindow() {
+  simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + 1);
+}
+
+function veto(who: string, week = WEEK) {
+  return simnet.callPublicFn(GOV, "veto", [Cl.stringAscii(week)], who);
 }
 
 // ---- tests ---------------------------------------------------------
@@ -204,14 +216,36 @@ describe("staking", () => {
     );
   });
 
-  it("returns stake on unstake when nothing is locked", () => {
+  it("charges the exit fee on unstake and hands it to the pool", () => {
     stake(proposer);
     const before = sbtcOf(proposer);
+    const poolBefore = poolOf();
+    const fee = (STAKE * EXIT_FEE_BPS) / 10000;
+
     expect(simnet.callPublicFn(GOV, "unstake", [Cl.uint(STAKE)], proposer).result).toBeOk(
       Cl.uint(0),
     );
-    expect(sbtcOf(proposer)).toBe(before + BigInt(STAKE));
+
+    // Member gets 90% back; the 10% stays behind, reclassified into the Pool.
+    expect(sbtcOf(proposer)).toBe(before + BigInt(STAKE - fee));
+    expect(poolOf()).toBe(poolBefore + BigInt(fee));
     expect(stakedOf()).toBe(0n);
+  });
+
+  it("makes renting weight for one vote cost the exit fee", () => {
+    // Stake, vote, leave -- the round trip is not free.
+    stake(proposer);
+    stake(voter1);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    closeWindow();
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED, one voter
+
+    const before = sbtcOf(voter1);
+    expect(simnet.callPublicFn(GOV, "unstake", [Cl.uint(STAKE)], voter1).result).toBeOk(
+      Cl.uint(0),
+    );
+    expect(sbtcOf(voter1)).toBe(before + BigInt(STAKE - (STAKE * EXIT_FEE_BPS) / 10000));
   });
 
   it("blocks unstaking while a week the member voted on is open", () => {
@@ -564,6 +598,75 @@ describe("bond floor protects a small pool", () => {
     stake(proposer);
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(lockedOf(proposer)).toBe(BigInt(BOND));
+  });
+});
+
+describe("veto blocks a week that would otherwise pass", () => {
+  beforeEach(() => {
+    wire();
+    fundPool();
+    stake(proposer);
+    stake(voter1);
+    stake(voter2);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    // Unanimous yes -- this week passes on the vote alone.
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
+    closeVoting();
+  });
+
+  it("refuses a veto before voting closes", () => {
+    // Fresh brief, still inside the voting window.
+    expect(propose(voter1, "2026-07-27").result).toBeOk(Cl.stringAscii("2026-07-27"));
+    expect(veto(voter2, "2026-07-27").result).toBeErr(Cl.uint(424));
+  });
+
+  it("refuses a second veto from the same principal", () => {
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    expect(veto(voter1).result).toBeErr(Cl.uint(425));
+  });
+
+  it("refuses settle while the veto window is still open", () => {
+    expect(settle().result).toBeErr(Cl.uint(408));
+  });
+
+  it("blocks the week when objections reach the veto quorum", () => {
+    // voter1 holds 10M of a 20M eligible base = 50%, far past the 15% needed.
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+
+    const aBefore = sbtcOf(corrA);
+    expect(settle().result).toBeOk(Cl.uint(4)); // STATUS_VETOED, not SETTLED
+    expect(sbtcOf(corrA)).toBe(aBefore);
+  });
+
+  it("returns the proposer's bond -- they cleared the bar they were set", () => {
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+    expect(settle().result).toBeOk(Cl.uint(4));
+    expect(stakeOf(proposer)).toBe(BigInt(STAKE));
+    expect(lockedOf(proposer)).toBe(0n);
+  });
+
+  it("leaves the pool untouched", () => {
+    expect(veto(voter1).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+    expect(settle().result).toBeOk(Cl.uint(4));
+    expect(poolOf()).toBe(BigInt(POOL));
+  });
+
+  it("still settles when objections fall short of the quorum", () => {
+    // A member below 15% of eligible weight objects; the week goes through.
+    faucet(outsider);
+    expect(simnet.callPublicFn(GOV, "stake", [Cl.uint(1_000_000)], outsider).result).toBeOk(
+      Cl.uint(1_000_000),
+    );
+    expect(veto(outsider).result).toBeOk(Cl.bool(true)); // 1M of 20M = 5%
+    simnet.mineEmptyBlocks(VETO_WINDOW);
+
+    const aBefore = sbtcOf(corrA);
+    expect(settle().result).toBeOk(Cl.uint(1)); // SETTLED
+    expect(sbtcOf(corrA)).toBe(aBefore + BigInt(PAY_A));
   });
 });
 

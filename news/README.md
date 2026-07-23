@@ -20,13 +20,15 @@ No roles, no rates to administer, no operator, no oracle.
    bond locked from proposer's stake          │
               │                               │
               ▼                               │
-   144 stacks blocks (~1h, TEST TIMING)      │
+   144 stacks blocks voting (TEST TIMING)    │
               │                               │
-      ┌───────┴────────┬──────────────┐       │
-      ▼                ▼              ▼       ▼
-   SETTLED          REJECTED       EXPIRED   draw = 0.5% of Pool,
-  entries paid    bond slashed    bond back   split per signal
-  (anyone calls)   week reopens   week reopens
+   48 blocks veto window                      │
+              │                               │
+   ┌──────┬───┴────┬──────────┬────────┐      ▼
+   ▼      ▼        ▼          ▼        ▼   draw = 0.5% of Pool,
+SETTLED VETOED  REJECTED  EXPIRED          split per signal
+ paid   blocked  slashed   bond back
+        bond back          week reopens
 ```
 
 ## Why the two balances are separate
@@ -96,6 +98,7 @@ shapes remove the failure mode rather than documenting around it.
 | `unstake(amount)` | member | withdraw free, unlocked stake |
 | `propose-brief(week, inscriptions, entries)` | member | open the vote |
 | `vote(week, support)` | member | yes / no, stake-weighted |
+| `veto(week)` | member | object after voting closes |
 | `settle(week)` | **anyone** | conclude and, if passed, pay every entry |
 
 A proposal carries a week, up to 7 inscription ids, and up to 30
@@ -113,6 +116,9 @@ votes on a parameter; the only vote is yes/no on a week.
 | `VOTING_THRESHOLD` | 66% | of cast weight |
 | `VOTING_QUORUM` | 15% | of eligible staked weight |
 | `MIN_PARTICIPANTS` | 2 | distinct voters |
+| `VETO_WINDOW` | 48 blocks | objection window after voting closes |
+| `VETO_QUORUM` | 15% | of eligible weight needed to block |
+| `EXIT_FEE_BPS` | 1,000 (10%) | skimmed from stake on unstake, into the Pool |
 | `MIN_STAKE` | 10,000 sats | membership floor |
 | `DRAW_BPS` | 50 (0.5%) | of Pool, per approved week |
 | `BOND_BPS` | 1,000 (10%) | of the pending draw |
@@ -124,9 +130,12 @@ votes on a parameter; the only vote is yes/no on a week.
 `MIN_STAKE` votes yes alone, reaches 100% of cast weight, and unilaterally
 spends a slice of everyone else's pool. See the `quorum is load-bearing` test.
 
-**Three outcomes, and the last two differ on purpose:**
+**Four outcomes:**
 
-- `SETTLED` — quorum + threshold met. Entries paid, bond released.
+- `SETTLED` — quorum + threshold met, not vetoed. Entries paid, bond released.
+- `VETOED` — objections reached `VETO_QUORUM` of eligible weight. Nobody paid.
+  Bond **returned** — the proposer cleared the bar they were set; a minority
+  chose to block anyway.
 - `REJECTED` — quorum met, threshold missed. Voters looked and said no. Bond
   **slashed** into the pool, so the next approved week pays slightly more.
 - `EXPIRED` — quorum never met. Nobody looked. Bond **returned in full**.
@@ -175,6 +184,30 @@ build must return `"PROD-BURN"`. To produce one:
 The 0.5% draw is sized against **one settlement per week**. Left on test timing
 with real money the same rate would distribute ~97.5% of the pool in a year
 instead of ~23% -- a correctness issue, not just a speed knob.
+
+## Veto and exit fee
+
+Weight is stake, and stake is refundable and never spent — so a voter approving
+a week is not spending their own money. These two guards don't change that; they
+make capturing the vote **expensive** rather than free.
+
+**Veto.** Passing a week needs 66% of *cast* weight. Surviving the veto needs
+objectors to hold under 15% of *eligible* weight. So pushing a week through
+unopposed means holding roughly six sevenths of the whole electorate, not two
+thirds of whoever showed up. It is the single biggest jump in the cost of
+capture available without restructuring.
+
+Recipients and the proposer are **not** barred from vetoing. A recipient
+vetoing a week they're paid in is declining their own money; a proposer vetoing
+their own week is withdrawing it. Neither extracts anything, so neither needs a
+guard.
+
+**Exit fee.** 10% of any unstake stays behind, reclassified from `Staked` into
+`Pool` — no tokens move, the claim on them changes. Renting weight to swing one
+vote and leaving costs 10% of whatever was rented, and the newsroom keeps it.
+
+Neither closes the underlying gap: a voter's own capital is still never at risk
+in a payout. Only weight-by-contribution does that.
 
 ## Economics
 
@@ -237,7 +270,7 @@ in the suite.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 49 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 57 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via

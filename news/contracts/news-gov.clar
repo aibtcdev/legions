@@ -69,6 +69,22 @@
 ;; Distinct voters required regardless of weight.
 (define-constant MIN_PARTICIPANTS u2)
 
+;; Veto window, in the same units as VOTE_WINDOW. Opens when voting closes and
+;; runs until settlement is allowed. A passing week can still be stopped here.
+;;
+;; This is the strongest anti-capture guard available: passing needs 66% of CAST
+;; weight, but surviving the veto needs the objectors to hold less than
+;; VETO_QUORUM of ELIGIBLE weight. In practice that moves the bar for pushing a
+;; week through unopposed from roughly two thirds of turnout to roughly six
+;; sevenths of the whole electorate.
+(define-constant VETO_WINDOW u48)
+(define-constant VETO_QUORUM u15) ;; % of eligible weight needed to block
+
+;; Skimmed from a member's stake on the way out, into the Pool. Makes renting
+;; weight to swing one vote and then leaving cost something, and hands that
+;; something to the newsroom rather than burning it.
+(define-constant EXIT_FEE_BPS u1000) ;; 10%
+
 ;; Membership floor.
 (define-constant MIN_STAKE u10000)
 
@@ -105,6 +121,7 @@
 (define-constant STATUS_SETTLED u1)
 (define-constant STATUS_REJECTED u2)
 (define-constant STATUS_EXPIRED u3)
+(define-constant STATUS_VETOED u4)
 
 ;; -------------------------------------------------------------------
 ;; Errors
@@ -131,6 +148,8 @@
 (define-constant ERR_BAD_INSCRIPTION (err u421)) ;; inscription id must be non-empty
 (define-constant ERR_PROPOSE_COOLDOWN (err u422)) ;; proposer barred after a failed brief
 (define-constant ERR_SELF_VOTE (err u423)) ;; proposer voting on own brief
+(define-constant ERR_VETO_WINDOW (err u424)) ;; veto outside [voteEnd, vetoEnd)
+(define-constant ERR_ALREADY_VETOED (err u425)) ;; one veto per principal per brief
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -191,9 +210,19 @@
     eligibleSnapshot: uint,
     yesWeight: uint,
     noWeight: uint,
+    vetoWeight: uint,
     voterCount: uint,
     status: uint,
   }
+)
+
+;; One veto per principal per brief.
+(define-map Vetoes
+  {
+    briefDate: (string-ascii 10),
+    voter: principal,
+  }
+  uint
 )
 
 ;; One entry per correspondent: how many of their signals appeared in the
@@ -287,6 +316,16 @@
     brief (some (get status brief))
     none
   )
+)
+
+(define-read-only (get-veto-record
+    (briefDate (string-ascii 10))
+    (voter principal)
+  )
+  (map-get? Vetoes {
+    briefDate: briefDate,
+    voter: voter,
+  })
 )
 
 (define-read-only (get-vote-record
@@ -463,6 +502,11 @@
       (current (get-stake tx-sender))
       (free (get-free-stake tx-sender))
       (remaining (- current amount))
+      ;; The exit fee stays behind, moved from Staked into Pool. Leaving hands
+      ;; a slice to the newsroom, and renting weight to swing one vote costs
+      ;; EXIT_FEE_BPS of whatever was rented.
+      (fee (/ (* amount EXIT_FEE_BPS) u10000))
+      (refund (- amount fee))
     )
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
     (asserts! (>= stacks-block-height (get-unlock-at tx-sender)) ERR_STAKE_LOCKED)
@@ -471,11 +515,17 @@
     (asserts! (or (is-eq remaining u0) (>= remaining MIN_STAKE)) ERR_BELOW_MIN_STAKE)
     (map-set Stakes tx-sender remaining)
     (var-set TotalStaked (- (var-get TotalStaked) amount))
-    (try! (contract-call? .news-treasury execute-unstake tx-sender amount))
+    ;; Reclassify the fee first (Staked -> Pool, no tokens move), then refund
+    ;; the remainder. Both reduce Staked; together they reduce it by `amount`.
+    (and (> fee u0)
+      (unwrap! (contract-call? .news-treasury slash fee) ERR_PAYOUT_FAILED))
+    (try! (contract-call? .news-treasury execute-unstake tx-sender refund))
     (print {
       event: "unstake",
       who: tx-sender,
       amount: amount,
+      fee: fee,
+      refund: refund,
       stake: remaining,
       totalStaked: (var-get TotalStaked),
     })
@@ -568,6 +618,7 @@
       eligibleSnapshot: (- snapshot proposerStake),
       yesWeight: u0,
       noWeight: u0,
+      vetoWeight: u0,
       voterCount: u0,
       status: STATUS_OPEN,
     })
@@ -650,6 +701,54 @@
 )
 
 ;; -------------------------------------------------------------------
+;; Public: veto
+;; -------------------------------------------------------------------
+;; Open in [voteEnd, vetoEnd). Any member may object after seeing the tally. If
+;; objections reach VETO_QUORUM of eligible weight, the week is blocked no
+;; matter how the vote went.
+;;
+;; Unlike voting, recipients and the proposer are NOT barred here. A recipient
+;; vetoing a week they are paid in is declining their own money, and a proposer
+;; vetoing their own week is withdrawing it -- neither can be used to extract
+;; anything, so there is nothing to guard against.
+(define-public (veto (briefDate (string-ascii 10)))
+  (let (
+      (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
+      (voteEnd (get voteEnd brief))
+      (vetoEnd (+ voteEnd VETO_WINDOW))
+      (weight (get-stake tx-sender))
+    )
+    (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
+    (asserts! (>= stacks-block-height voteEnd) ERR_VETO_WINDOW)
+    (asserts! (< stacks-block-height vetoEnd) ERR_VETO_WINDOW)
+    (asserts! (>= weight MIN_STAKE) ERR_INELIGIBLE)
+    (asserts!
+      (is-none (map-get? Vetoes {
+        briefDate: briefDate,
+        voter: tx-sender,
+      }))
+      ERR_ALREADY_VETOED
+    )
+    (map-set Vetoes {
+      briefDate: briefDate,
+      voter: tx-sender,
+    } weight)
+    (map-set Briefs briefDate
+      (merge brief { vetoWeight: (+ (get vetoWeight brief) weight) })
+    )
+    (extend-lock tx-sender vetoEnd)
+    (print {
+      event: "veto",
+      briefDate: briefDate,
+      voter: tx-sender,
+      weight: weight,
+      vetoWeight: (+ (get vetoWeight brief) weight),
+    })
+    (ok true)
+  )
+)
+
+;; -------------------------------------------------------------------
 ;; Public: settle (permissionless)
 ;; -------------------------------------------------------------------
 ;; Concludes the vote and, if it passed, pays every entry -- in one call, by
@@ -675,6 +774,10 @@
         (> cast u0)
         (>= (/ (* (get yesWeight brief) u100) cast) VOTING_THRESHOLD)
       ))
+      (vetoed (and
+        (> eligible u0)
+        (>= (/ (* (get vetoWeight brief) u100) eligible) VETO_QUORUM)
+      ))
       (pool (contract-call? .news-treasury get-pool))
       (draw (/ (* pool DRAW_BPS) u10000))
       (fee (/ (* draw PROPOSER_FEE_BPS) u10000))
@@ -682,7 +785,7 @@
       (perSignal (/ distributable (get totalSignals brief)))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
-    (asserts! (>= stacks-block-height (get voteEnd brief)) ERR_VOTE_STILL_OPEN)
+    (asserts! (>= stacks-block-height (+ (get voteEnd brief) VETO_WINDOW)) ERR_VOTE_STILL_OPEN)
 
     ;; Release the proposer's bond lock in every outcome. Whether the bond is
     ;; also confiscated is decided below.
@@ -692,6 +795,24 @@
         u0
       ))
 
+    (if vetoed
+      ;; VETOED -- a VETO_QUORUM minority blocked it. The proposer cleared the
+      ;; bar they were asked to clear, so the bond comes back; the cooldown
+      ;; still applies so a contested week is not immediately re-submitted by
+      ;; the same principal.
+      (begin
+        (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
+        (map-set Briefs briefDate (merge brief { status: STATUS_VETOED }))
+        (print {
+          event: "settle",
+          briefDate: briefDate,
+          outcome: "vetoed",
+          vetoWeight: (get vetoWeight brief),
+          eligible: eligible,
+          bondReturned: bond,
+        })
+        (ok STATUS_VETOED)
+      )
     (if (not quorumMet)
       ;; EXPIRED -- nobody showed up. The proposer did nothing wrong, so the
       ;; bond is returned in full and the date reopens.
@@ -777,6 +898,7 @@
           (ok STATUS_SETTLED)
         )
       )
+    )
     )
   )
 )
