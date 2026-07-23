@@ -170,6 +170,7 @@
 (define-constant ERR_ALREADY_VETOED (err u425)) ;; one veto per principal per week
 (define-constant ERR_DUST_CONTRIBUTION (err u426)) ;; too small to mint any weight
 (define-constant ERR_PROPOSE_TOO_SOON (err u432)) ;; another proposal is too recent
+(define-constant ERR_EMPTY_TITLE (err u433)) ;; a proposal must say what it is
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -218,7 +219,7 @@
   (string-ascii 10)
   {
     proposer: principal,
-    inscriptions: (list 7 (buff 64)),
+    inscriptions: (list 7 (buff 80)),
     digest: (buff 32),
     entryCount: uint,
     totalSignals: uint,
@@ -236,6 +237,24 @@
 
 ;; One entry per correspondent: how many of their signals appeared in the
 ;; week's briefs. Every signal is worth the same; the count is the weight.
+;; What the proposal says it is, in the proposer's own words.
+;;
+;; The contract never reads this. It exists so a voter, a challenger, or anyone
+;; reading an explorer can see what is being claimed without reconstructing it
+;; from a list of principals and integers. A proposal that moves money should be
+;; legible on its face.
+;;
+;; Convention: title carries the week and the totals ("Week of 2026-07-20: 84
+;; signals from 3 correspondents"), description carries the per-correspondent
+;; tally and anything unusual about the week.
+(define-map BriefMeta
+  (string-ascii 10)
+  {
+    title: (string-ascii 128),
+    description: (string-ascii 512),
+  }
+)
+
 (define-map BriefEntries
   (string-ascii 10)
   (list 30 {
@@ -319,6 +338,11 @@
 
 (define-read-only (get-brief (briefDate (string-ascii 10)))
   (map-get? Briefs briefDate)
+)
+
+;; Title and description as submitted. Read this before voting.
+(define-read-only (get-brief-meta (briefDate (string-ascii 10)))
+  (map-get? BriefMeta briefDate)
 )
 
 (define-read-only (get-brief-entries (briefDate (string-ascii 10)))
@@ -545,7 +569,9 @@
 ;; which they forfeit only if voters reject the week on its merits.
 (define-public (propose-brief
     (briefDate (string-ascii 10))
-    (inscriptions (list 7 (buff 64)))
+    (title (string-ascii 128))
+    (description (string-ascii 512))
+    (inscriptions (list 7 (buff 80)))
     (entries (list 30 {
       recipient: principal,
       signals: uint,
@@ -586,6 +612,9 @@
       )
       ERR_BAD_DATE
     )
+    ;; Say what this is. A proposal that moves money should be legible without
+    ;; decoding a list of principals and integers.
+    (asserts! (> (len title) u0) ERR_EMPTY_TITLE)
     (asserts! (> (len inscriptions) u0) ERR_BAD_INSCRIPTION)
     (asserts! (> (len entries) u0) ERR_EMPTY_ENTRIES)
     (asserts! (get ok entryCheck) ERR_BAD_ENTRIES)
@@ -606,6 +635,10 @@
     (asserts! (>= proposerWeight (+ alreadyLocked bond)) ERR_INSUFFICIENT_BOND)
 
     (var-set LastProposeAt stacks-block-height)
+    (map-set BriefMeta briefDate {
+      title: title,
+      description: description,
+    })
     (map-set LockedWeight tx-sender (+ alreadyLocked bond))
     (map-set BriefEntries briefDate entries)
     (map-set BriefRecipients briefDate (get seen entryCheck))
@@ -630,6 +663,7 @@
     (print {
       event: "propose-brief",
       briefDate: briefDate,
+      title: title,
       proposer: tx-sender,
       inscriptions: inscriptions,
       entryCount: (len entries),

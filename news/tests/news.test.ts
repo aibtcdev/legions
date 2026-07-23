@@ -109,8 +109,31 @@ function wire() {
   ).toBeOk(Cl.bool(true));
 }
 
-function propose(who = proposer, week = WEEK, list = entries(), ins = inscriptions()) {
-  return simnet.callPublicFn(GOV, "propose-brief", [Cl.stringAscii(week), ins, list], who);
+const TITLE = "Week of 2026-07-20: 84 signals from 2 correspondents";
+const DESCRIPTION =
+  "Tally across the week's 7 inscribed briefs. corrA 49 signals, corrB 35. " +
+  "Counts verified against aibtc.news; addresses resolved via aibtc.com/api/agents.";
+
+function propose(
+  who = proposer,
+  week = WEEK,
+  list = entries(),
+  ins = inscriptions(),
+  title = TITLE,
+  description = DESCRIPTION,
+) {
+  return simnet.callPublicFn(
+    GOV,
+    "propose-brief",
+    [
+      Cl.stringAscii(week),
+      Cl.stringAscii(title),
+      Cl.stringAscii(description),
+      ins,
+      list,
+    ],
+    who,
+  );
 }
 
 function vote(who: string, support: boolean, week = WEEK) {
@@ -286,6 +309,25 @@ describe("propose-brief", () => {
   it("rejects a malformed week", () => {
     expect(propose(proposer, "2026-7-1").result).toBeErr(Cl.uint(420));
     expect(propose(proposer, "20-07-2026").result).toBeErr(Cl.uint(420));
+  });
+
+  it("requires a title, so the proposal is legible on its face", () => {
+    expect(
+      propose(proposer, WEEK, entries(), inscriptions(), "", DESCRIPTION).result,
+    ).toBeErr(Cl.uint(433));
+  });
+
+  it("records the title and description for voters to read", () => {
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    const r = simnet.callReadOnlyFn(
+      GOV,
+      "get-brief-meta",
+      [Cl.stringAscii(WEEK)],
+      deployer,
+    );
+    const dump = Cl.prettyPrint(r.result as any);
+    expect(dump).toContain("84 signals");
+    expect(dump).toContain("aibtc.news");
   });
 
   it("rejects empty entries and empty inscriptions", () => {

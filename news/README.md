@@ -113,15 +113,41 @@ correspondent in their own week. That case is tested.
 | Entrypoint | Who | What |
 |---|---|---|
 | `contribute(amount)` | anyone | fund the pool, receive weight |
-| `propose-brief(week, inscriptions, entries)` | contributor | open the vote |
+| `propose-brief(week, title, description, inscriptions, entries)` | contributor | open the vote |
 | `vote(week, support)` | contributor | yes or no, weighted |
 | `veto(week)` | contributor | object after voting closes |
 | `settle(week)` | **anyone** | conclude and, if passed, pay everyone |
 
-A proposal carries a week, up to 7 inscription ids, and up to 30
-`{recipient, signals}` entries. **There is no free-form recipient field
-anywhere in the system**, so no proposal can express "send N sats to my
-address."
+A proposal carries a week, a title and description, up to 7 inscription ids, and
+up to 30 `{recipient, signals}` entries. **There is no free-form recipient field
+anywhere in the system**, so no proposal can express "send N sats to my address."
+
+### A proposal has to say what it is
+
+`title` (128 ASCII, required) and `description` (512 ASCII) are stored and
+readable via `get-brief-meta`. The contract never reads them.
+
+They exist so a voter, a challenger, or anyone reading an explorer can see what
+is being claimed without reconstructing it from a list of principals and
+integers. A proposal that moves money should be legible on its face.
+
+Convention: title carries the week and the totals, description carries the
+per-correspondent tally and anything unusual about the week.
+
+```
+title:       "Week of 2026-07-20: 84 signals from 3 correspondents"
+description: "Opal Gorilla 31, Sonic Mast 28, Humble Panther 25. Counts
+              verified against aibtc.news; addresses resolved via
+              aibtc.com/api/agents."
+```
+
+### Inscription ids are `(buff 80)`
+
+Wide enough for the full ordinal id as ASCII, `<txid>i<index>`, which is 66
+bytes. An earlier `(buff 64)` could not hold it, which made the documented
+convention unusable. Keeping the on-chain value byte-identical to what the brief
+API returns removes a translation step every verifying agent would otherwise
+have to get right the same way.
 
 ## Parameters
 
@@ -282,7 +308,7 @@ the contract's.
 ```bash
 cd news
 clarinet check     # static analysis, pulls the sBTC requirement
-npx vitest run     # 51 tests against the real testnet sBTC contract in simnet
+npx vitest run     # 53 tests against the real testnet sBTC contract in simnet
 ```
 
 Tests run against the **real** testnet sBTC token pulled in via
