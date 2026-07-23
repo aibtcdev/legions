@@ -20,7 +20,7 @@ No roles, no rates to administer, no operator, no oracle.
    bond locked from proposer's stake          │
               │                               │
               ▼                               │
-   1008 burn blocks (~7 days), stake-weighted │
+   144 stacks blocks (~1h, TEST TIMING)      │
               │                               │
       ┌───────┴────────┬──────────────┐       │
       ▼                ▼              ▼       ▼
@@ -109,7 +109,7 @@ votes on a parameter; the only vote is yes/no on a week.
 
 | Constant | Value | |
 |---|---|---|
-| `VOTE_WINDOW` | 1008 burn blocks | ~7 days — one settlement per week |
+| `VOTE_WINDOW` | **144 stacks blocks** | TEST TIMING — production is 1008 **burn** blocks |
 | `VOTING_THRESHOLD` | 66% | of cast weight |
 | `VOTING_QUORUM` | 15% | of eligible staked weight |
 | `MIN_PARTICIPANTS` | 2 | distinct voters |
@@ -152,6 +152,29 @@ cycle. `MIN_BOND` backs this up — the percentage bond works out to
 pool / 200,000, which is 500 sats at a 0.01 BTC pool and no deterrent at all.
 Both are covered by the `a single member cannot hold a week hostage` and
 `bond floor protects a small pool` suites.
+
+## This build is timed for testing, not production
+
+Counting is on **Stacks blocks**, not burn (Bitcoin) blocks, and `VOTE_WINDOW`
+is **144** instead of 1008. A full `propose -> vote -> settle` lifecycle
+completes in roughly **an hour** on testnet instead of seven days, so SETTLED,
+REJECTED and EXPIRED can each be exercised several times in a day.
+
+```clarity
+(contract-call? .news-gov get-timing-mode)   ;; => "TEST-STACKS-BLOCKS"
+```
+
+Query that on any deployed instance to see which build is live. A production
+build must return `"PROD-BURN"`. To produce one:
+
+1. `VOTE_WINDOW` -> `u1008`
+2. every `stacks-block-height` in `news-gov.clar` -> `burn-block-height`
+3. `get-timing-mode` -> `"PROD-BURN"`
+4. re-run the suite with `mineEmptyBurnBlocks` in place of `mineEmptyBlocks`
+
+The 0.5% draw is sized against **one settlement per week**. Left on test timing
+with real money the same rate would distribute ~97.5% of the pool in a year
+instead of ~23% -- a correctness issue, not just a speed knob.
 
 ## Economics
 

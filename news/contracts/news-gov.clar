@@ -38,11 +38,23 @@
 ;; -------------------------------------------------------------------
 (define-constant SELF (as-contract tx-sender))
 
-;; Voting window in BITCOIN blocks. ~1008 blocks = ~7 days: one settlement per
-;; week, so the pool draws 1% per week rather than 1% per day. At a daily
-;; cadence the same rate distributes ~97.5% of the pool in a year; weekly, ~41%,
-;; which leaves the pool alive into a second year without continuous refilling.
-(define-constant VOTE_WINDOW u1008)
+;; ///////////////////////////////////////////////////////////////////////////
+;; TEST TIMING -- THIS BUILD IS NOT MAINNET-READY
+;;
+;; Counting is on STACKS blocks, not burn (Bitcoin) blocks, and the window is
+;; 144 instead of 1008, so a full propose -> vote -> settle lifecycle completes
+;; in roughly an hour on testnet instead of seven days. That makes it possible
+;; to exercise SETTLED, REJECTED and EXPIRED several times in a day.
+;;
+;; PRODUCTION: set VOTE_WINDOW to u1008 and switch every height reference in
+;; this contract back to `stacks-block-height`. One settlement per week is what
+;; the 0.5% draw is sized against -- at a daily cadence the same rate
+;; distributes ~97.5% of the pool in a year instead of ~23%.
+;;
+;; `get-timing-mode` returns "TEST-STACKS-BLOCKS" so a deployed instance can be
+;; queried for which build it is. A production build must return "PROD-BURN".
+;; ///////////////////////////////////////////////////////////////////////////
+(define-constant VOTE_WINDOW u144)
 
 ;; Percentage of CAST weight that must be yes for a brief to pass.
 (define-constant VOTING_THRESHOLD u66)
@@ -174,7 +186,7 @@
     entryCount: uint,
     totalSignals: uint,
     bond: uint,
-    createdBurn: uint,
+    createdAt: uint,
     voteEnd: uint,
     eligibleSnapshot: uint,
     yesWeight: uint,
@@ -217,6 +229,11 @@
 ;; -------------------------------------------------------------------
 (define-read-only (get-stake (who principal))
   (default-to u0 (map-get? Stakes who))
+)
+
+;; Which timing build this is. A production deployment must return "PROD-BURN".
+(define-read-only (get-timing-mode)
+  "TEST-STACKS-BLOCKS"
 )
 
 (define-read-only (get-total-staked)
@@ -448,7 +465,7 @@
       (remaining (- current amount))
     )
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
-    (asserts! (>= burn-block-height (get-unlock-at tx-sender)) ERR_STAKE_LOCKED)
+    (asserts! (>= stacks-block-height (get-unlock-at tx-sender)) ERR_STAKE_LOCKED)
     (asserts! (<= amount free) ERR_INSUFFICIENT_STAKE)
     ;; Leaving entirely is fine; leaving a dust position below the floor is not.
     (asserts! (or (is-eq remaining u0) (>= remaining MIN_STAKE)) ERR_BELOW_MIN_STAKE)
@@ -491,7 +508,7 @@
       (proposerStake (get-stake tx-sender))
       (alreadyLocked (locked-of tx-sender))
       (snapshot (var-get TotalStaked))
-      (voteEnd (+ burn-block-height VOTE_WINDOW))
+      (voteEnd (+ stacks-block-height VOTE_WINDOW))
       (entryCheck (fold check-entry entries {
         seen: (list),
         ok: true,
@@ -526,7 +543,7 @@
     ;; A proposer whose last brief failed sits out one window. Anyone else may
     ;; take this week immediately -- the bar is on the principal, not the slot.
     (asserts!
-      (>= burn-block-height (get-propose-cooldown tx-sender))
+      (>= stacks-block-height (get-propose-cooldown tx-sender))
       ERR_PROPOSE_COOLDOWN
     )
     ;; Only a member may propose, and their free stake must cover the bond.
@@ -544,7 +561,7 @@
       entryCount: (len entries),
       totalSignals: totalSignals,
       bond: bond,
-      createdBurn: burn-block-height,
+      createdAt: stacks-block-height,
       voteEnd: voteEnd,
       ;; Quorum denominator excludes the proposer, who cannot vote on their own
       ;; brief. Otherwise a large proposer would make quorum unreachable.
@@ -586,7 +603,7 @@
       (weight (get-stake tx-sender))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_VOTE_CLOSED)
-    (asserts! (< burn-block-height (get voteEnd brief)) ERR_VOTE_CLOSED)
+    (asserts! (< stacks-block-height (get voteEnd brief)) ERR_VOTE_CLOSED)
     (asserts! (>= weight MIN_STAKE) ERR_INELIGIBLE)
     ;; The proposer has a bond at stake and cannot also vote their own brief up.
     (asserts! (not (is-eq tx-sender (get proposer brief))) ERR_SELF_VOTE)
@@ -665,7 +682,7 @@
       (perSignal (/ distributable (get totalSignals brief)))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
-    (asserts! (>= burn-block-height (get voteEnd brief)) ERR_VOTE_STILL_OPEN)
+    (asserts! (>= stacks-block-height (get voteEnd brief)) ERR_VOTE_STILL_OPEN)
 
     ;; Release the proposer's bond lock in every outcome. Whether the bond is
     ;; also confiscated is decided below.
@@ -679,13 +696,13 @@
       ;; EXPIRED -- nobody showed up. The proposer did nothing wrong, so the
       ;; bond is returned in full and the date reopens.
       (begin
-        (map-set ProposeCooldownUntil proposer (+ burn-block-height VOTE_WINDOW))
+        (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
         (map-set Briefs briefDate (merge brief { status: STATUS_EXPIRED }))
         (print {
           event: "settle",
           briefDate: briefDate,
           outcome: "expired",
-          cooldownUntil: (+ burn-block-height VOTE_WINDOW),
+          cooldownUntil: (+ stacks-block-height VOTE_WINDOW),
           cast: cast,
           eligible: eligible,
           voterCount: (get voterCount brief),
@@ -708,13 +725,13 @@
               u0
             ))
           (and (> bond u0) (unwrap! (contract-call? .news-treasury slash bond) ERR_PAYOUT_FAILED))
-          (map-set ProposeCooldownUntil proposer (+ burn-block-height VOTE_WINDOW))
+          (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
           (map-set Briefs briefDate (merge brief { status: STATUS_REJECTED }))
           (print {
             event: "settle",
             briefDate: briefDate,
             outcome: "rejected",
-            cooldownUntil: (+ burn-block-height VOTE_WINDOW),
+            cooldownUntil: (+ stacks-block-height VOTE_WINDOW),
             yesWeight: (get yesWeight brief),
             noWeight: (get noWeight brief),
             bondSlashed: bond,

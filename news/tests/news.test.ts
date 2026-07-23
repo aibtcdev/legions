@@ -20,7 +20,7 @@ const govPrincipal = `${deployer}.${GOV}`;
 const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
 
 // Must match news-gov.clar.
-const VOTE_WINDOW = 1008; // ~7 days in burn blocks
+const VOTE_WINDOW = 144; // TEST TIMING: stacks blocks, ~1h on testnet
 const MIN_STAKE = 10_000;
 
 // The week's first brief date. Keyed per week, not per day.
@@ -132,7 +132,7 @@ function briefStatus(week = WEEK): bigint {
 }
 
 function closeWindow() {
-  simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+  simnet.mineEmptyBlocks(VOTE_WINDOW + 1);
 }
 
 // ---- tests ---------------------------------------------------------
@@ -532,7 +532,7 @@ describe("a single member cannot hold a week hostage", () => {
   });
 
   it("lets the original proposer back in once the cooldown elapses", () => {
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW + 1);
+    simnet.mineEmptyBlocks(VOTE_WINDOW + 1);
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
   });
 
