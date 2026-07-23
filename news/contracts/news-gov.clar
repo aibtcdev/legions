@@ -26,12 +26,18 @@
 ;; voting. A tampered list gets voted down and costs the proposer their bond.
 ;; Voting without checking is the voter's problem, not the contract's.
 ;;
-;; FOUR OUTCOMES:
-;;   SETTLED  = quorum + threshold met, not vetoed. Entries paid, bond released.
-;;   VETOED   = objections reached VETO_QUORUM of eligible weight. Bond returned.
-;;   REJECTED = quorum met, threshold missed. Voters looked and said no. The
-;;              bond is burned, so the proposer permanently loses that much say.
-;;   EXPIRED  = quorum never met. Nobody looked. Bond released in full.
+;; TWO OUTCOMES. `reason` says which cause:
+;;
+;;   PASSED  reason "paid"          correspondents paid.
+;;   FAILED  reason "voted-down"    voters turned up and said no.
+;;           reason "no-quorum"     too few voted to decide anything.
+;;           reason "vetoed"        a VETO_QUORUM minority blocked it.
+;;           reason "pool-short"    the snapshotted draw no longer fits the pool.
+;;
+;; NOTHING IS EVER BURNED OR CONFISCATED. The bond is a lock: it earmarks weight
+;; while a brief is open so one principal cannot stack unlimited proposals, and
+;; it is released on every outcome. A failed week costs the proposer gas and a
+;; cooldown, nothing more, because most failures are other people not voting.
 ;;
 ;; Punishing a proposer because other people failed to show up would end
 ;; proposing within a week. Apathy costs a delay, never a bond.
@@ -70,6 +76,7 @@
 ;; week through unopposed from roughly two thirds of turnout to roughly six
 ;; sevenths of the whole electorate.
 (define-constant VETO_WINDOW u12)
+
 (define-constant VETO_QUORUM u15) ;; % of eligible weight needed to block
 
 ;; Percentage of CAST weight that must be yes for a week to pass.
@@ -131,18 +138,17 @@
 ;; spam.
 (define-constant MIN_BOND u10000)
 
-;; Paid to the proposer out of the draw, on success only. Assembling and
-;; verifying an entry list is real work that nobody is otherwise paid for.
-;; There is deliberately no settler fee: every recipient in a passed week
-;; already wants to call `settle`, since that call is how they get paid.
-(define-constant PROPOSER_FEE_BPS u100)
+;; There is deliberately NO proposer fee. Assembling a week's tally is a job
+;; someone does on everyone else's behalf, not a trade: proposing costs nothing
+;; beyond gas and earns nothing. The whole draw goes to the correspondents who
+;; did the reporting.
 
 ;; -- Week lifecycle states --
+;; Two terminal states. The cause lives in `reason`, so a UI switches on two
+;; values and shows the detail when it wants to.
 (define-constant STATUS_OPEN u0)
-(define-constant STATUS_SETTLED u1)
-(define-constant STATUS_REJECTED u2)
-(define-constant STATUS_EXPIRED u3)
-(define-constant STATUS_VETOED u4)
+(define-constant STATUS_PASSED u1) ;; paid out
+(define-constant STATUS_FAILED u2) ;; voted down, no quorum, vetoed, or never concluded
 
 ;; -------------------------------------------------------------------
 ;; Errors
@@ -193,18 +199,19 @@
 )
 
 ;; Earliest height at which a principal may propose again, set whenever a week
-;; they proposed fails (EXPIRED, REJECTED or VETOED).
+;; they proposed FAILS. Passing carries no cooldown.
 ;;
-;; This closes a free denial-of-service. Returning the bond on EXPIRED protects
-;; honest proposers from other people's apathy, but combined with "one live
-;; proposal per week" and an unrestricted reopen, it let a single MIN_WEIGHT
-;; holder propose garbage, watch it expire, get the bond back, and immediately
-;; re-propose. Forever, at zero cost, blocking the legitimate proposer.
+;; This closes a cheap denial of service. Without it a single MIN_WEIGHT holder
+;; could propose garbage, watch it fail, and re-propose immediately, forever,
+;; blocking the legitimate proposer from the slot. The bar is on the PRINCIPAL,
+;; not the week: anyone else may take the reopened week in the next block, so an
+;; honest failure costs the newsroom nothing.
 ;;
-;; The bar is on the PRINCIPAL, not the week: anyone else may propose the
-;; reopened week in the very next block, so an honest failure costs the newsroom
-;; nothing, while sustaining the attack costs a real contribution per account
-;; per cycle.
+;; NOTE: this is set in `conclude`, not at propose. A brief nobody ever
+;; concludes therefore leaves its proposer uncooldowned, and each such brief
+;; keeps its bond locked. That is precisely what the bond bounds: free weight
+;; must cover every open bond, so a minimum-weight member can hold exactly one
+;; outstanding brief at a time.
 (define-map ProposeCooldownUntil
   principal
   uint
@@ -213,8 +220,8 @@
 ;; Height of the most recent proposal, by anyone. Enforces PROPOSE_INTERVAL.
 (define-data-var LastProposeAt uint u0)
 
-;; One week per date. REJECTED, EXPIRED and VETOED clear the way for a
-;; re-proposal; SETTLED is terminal.
+;; One week per date. A FAILED week clears the way for a re-proposal; PASSED is
+;; terminal.
 (define-map Briefs
   (string-ascii 10)
   {
@@ -224,6 +231,17 @@
     entryCount: uint,
     totalSignals: uint,
     bond: uint,
+    ;; The payout SNAPSHOTTED at propose time, so a week always pays what the
+    ;; voters were shown, whenever it is eventually concluded.
+    ;;
+    ;; Reading the pool at conclude time instead created a real exploit: a
+    ;; passed week could be held and concluded later against a much larger pool,
+    ;; paying far more than anyone approved. The first fix was a deadline, which
+    ;; was worse -- it turned a late payout into NO payout for work already
+    ;; done, and made an automated keeper mandatory infrastructure. Snapshotting
+    ;; removes the incentive to sit on a brief instead of punishing everyone for
+    ;; being slow.
+    draw: uint,
     createdAt: uint,
     voteEnd: uint,
     eligibleSnapshot: uint,
@@ -232,6 +250,11 @@
     vetoWeight: uint,
     voterCount: uint,
     status: uint,
+    ;; Why a week ended the way it did, for display only. FAILED covers three
+    ;; different causes and a UI should be able to tell them apart without
+    ;; replaying events.
+    ;;   "" | "paid" | "voted-down" | "no-quorum" | "vetoed" | "pool-short"
+    reason: (string-ascii 16),
   }
 )
 
@@ -296,6 +319,46 @@
 ;; Which timing build this is. A production deployment must return "PROD-BURN".
 (define-read-only (get-timing-mode)
   "TEST-STACKS-BLOCKS"
+)
+
+;; Every governance parameter in one call, so a UI reads the truth from chain
+;; rather than hardcoding constants that can drift from the deployed contract.
+(define-read-only (get-params)
+  {
+    votingQuorum: VOTING_QUORUM,
+    votingThreshold: VOTING_THRESHOLD,
+    vetoQuorum: VETO_QUORUM,
+    minParticipants: MIN_PARTICIPANTS,
+    minWeight: MIN_WEIGHT,
+    drawBps: DRAW_BPS,
+    bondBps: BOND_BPS,
+    minBond: MIN_BOND,
+    voteWindow: VOTE_WINDOW,
+    vetoWindow: VETO_WINDOW,
+    proposeInterval: PROPOSE_INTERVAL,
+  }
+)
+
+;; Where a week is in its lifecycle right now, so nothing has to recompute
+;; window arithmetic.
+;;   "none" | "voting" | "veto" | "concludable" | "passed" | "failed"
+(define-read-only (get-phase (briefDate (string-ascii 10)))
+  (match (map-get? Briefs briefDate)
+    brief (if (is-eq (get status brief) STATUS_PASSED)
+      "passed"
+      (if (is-eq (get status brief) STATUS_FAILED)
+        "failed"
+        (if (< stacks-block-height (get voteEnd brief))
+          "voting"
+          (if (< stacks-block-height (+ (get voteEnd brief) VETO_WINDOW))
+            "veto"
+            "concludable"
+          )
+        )
+      )
+    )
+    "none"
+  )
 )
 
 (define-read-only (get-weight (who principal))
@@ -425,25 +488,6 @@
   })))
 )
 
-;; The payout reference for the proposer's success fee.
-;;
-;; This deliberately hashes a tuple with DIFFERENT FIELD NAMES from `payout-ref`
-;; ({f,r} vs {d,r}). Consensus serialization encodes tuple field names, so the
-;; two shapes can never produce the same bytes and therefore never the same ref.
-;; An earlier version keyed the fee off `payout-ref` with a "reserved" sentinel
-;; value, which was not safe: nothing stopped an entry from carrying that exact
-;; value and paying the proposer. The refs would collide, the treasury would
-;; reject the second payout as ERR_ALREADY_PAID, and settling that week would
-;; revert forever.
-(define-read-only (fee-ref
-    (weekStart (string-ascii 10))
-    (proposer principal)
-  )
-  (sha256 (unwrap-panic (to-consensus-buff? {
-    f: weekStart,
-    r: proposer,
-  })))
-)
 
 ;; -------------------------------------------------------------------
 ;; Private helpers
@@ -489,7 +533,7 @@
 )
 
 ;; Pays one correspondent. Threaded through `fold`, so it cannot use `try!`.
-;; It carries an `ok` flag instead, which `settle` asserts on afterwards. A
+;; It carries an `ok` flag instead, which `conclude` asserts on afterwards. A
 ;; false flag aborts the whole transaction, reverting any transfers already
 ;; made.
 (define-private (pay-entry
@@ -585,6 +629,7 @@
       (alreadyLocked (locked-of tx-sender))
       (snapshot (var-get TotalWeight))
       (voteEnd (+ stacks-block-height VOTE_WINDOW))
+      (draw (/ (* pool DRAW_BPS) u10000))
       (entryCheck (fold check-entry entries {
         seen: (list),
         ok: true,
@@ -595,7 +640,7 @@
     (match existing
       prev (begin
         (asserts! (not (is-eq (get status prev) STATUS_OPEN)) ERR_BRIEF_ALREADY_OPEN)
-        (asserts! (not (is-eq (get status prev) STATUS_SETTLED)) ERR_BRIEF_SETTLED)
+        (asserts! (not (is-eq (get status prev) STATUS_PASSED)) ERR_BRIEF_SETTLED)
         true
       )
       true
@@ -619,6 +664,10 @@
     (asserts! (> (len entries) u0) ERR_EMPTY_ENTRIES)
     (asserts! (get ok entryCheck) ERR_BAD_ENTRIES)
     (asserts! (> pool u0) ERR_EMPTY_POOL)
+    ;; Reject a week whose draw cannot cover one sat per signal, here rather
+    ;; than at conclude. Failing at conclude would let a week pass its vote and
+    ;; then be unpayable.
+    (asserts! (> (/ draw totalSignals) u0) ERR_DUST_DRAW)
     ;; A proposer whose last week failed sits out one window. Anyone else may
     ;; take this week immediately: the bar is on the principal, not the slot.
     (asserts!
@@ -649,6 +698,7 @@
       entryCount: (len entries),
       totalSignals: totalSignals,
       bond: bond,
+      draw: draw,
       createdAt: stacks-block-height,
       voteEnd: voteEnd,
       ;; Quorum denominator excludes the proposer, who cannot vote on their own
@@ -659,6 +709,7 @@
       vetoWeight: u0,
       voterCount: u0,
       status: STATUS_OPEN,
+      reason: "",
     })
     (print {
       event: "propose-brief",
@@ -669,7 +720,7 @@
       entryCount: (len entries),
       totalSignals: totalSignals,
       bond: bond,
-      drawPreview: (/ (* pool DRAW_BPS) u10000),
+      draw: draw,
       voteEnd: voteEnd,
       eligibleSnapshot: (- snapshot proposerWeight),
     })
@@ -785,7 +836,7 @@
 )
 
 ;; -------------------------------------------------------------------
-;; Public: settle (permissionless)
+;; Public: conclude (permissionless)
 ;; -------------------------------------------------------------------
 ;; Concludes the week and, if it passed, pays every correspondent, in one call,
 ;; by anyone. Nobody has to be online, trusted, or available for correspondents
@@ -793,7 +844,7 @@
 ;;
 ;; The draw is read at settle time, not at propose time, so a contribution that
 ;; lands mid-vote raises that week's payout.
-(define-public (settle (briefDate (string-ascii 10)))
+(define-public (conclude (briefDate (string-ascii 10)))
   (let (
       (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
       (entries (default-to (list) (map-get? BriefEntries briefDate)))
@@ -814,122 +865,129 @@
         (> eligible u0)
         (>= (/ (* (get vetoWeight brief) u100) eligible) VETO_QUORUM)
       ))
-      (pool (contract-call? .news-treasury get-balance))
-      (draw (/ (* pool DRAW_BPS) u10000))
-      (fee (/ (* draw PROPOSER_FEE_BPS) u10000))
-      (distributable (- draw fee))
-      (perSignal (/ distributable (get totalSignals brief)))
+      ;; The amount fixed at propose time, not today's pool. The entire draw
+      ;; goes to correspondents; no fee is skimmed.
+      (draw (get draw brief))
+      (perSignal (/ draw (get totalSignals brief)))
+      ;; Snapshotting traded a structural guarantee for a probabilistic one.
+      ;; When the draw was a fraction of the CURRENT balance a shortfall was
+      ;; impossible. Now it is fixed at propose, and because the cooldown only
+      ;; lands at conclude, un-concluded briefs can accumulate claims at roughly
+      ;; one per PROPOSE_INTERVAL. At 0.5% a draw you would need ~200 of them
+      ;; outstanding, so this is remote -- but without handling it, a short pool
+      ;; makes execute-payout fail, conclude revert, and the brief stick OPEN
+      ;; forever with no way out. Failing the week instead keeps it recoverable:
+      ;; it reopens and can be proposed again once the pool is healthy.
+      ;; Compare the amount actually disbursed, not the draw. perSignal is
+      ;; floored, so the real spend is up to totalSignals-1 sats below the draw,
+      ;; and comparing the draw would fail a week the pool could in fact cover.
+      (poolShort (> (* perSignal (get totalSignals brief))
+        (contract-call? .news-treasury get-balance)
+      ))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_SETTLED)
     (asserts! (>= stacks-block-height (+ (get voteEnd brief) VETO_WINDOW)) ERR_VOTE_STILL_OPEN)
-
-    ;; Release the proposer's bond lock in every outcome. Whether the bond is
-    ;; also burned is decided below.
+    ;; Release the proposer's bond in EVERY outcome. The bond is a lock, not a
+    ;; penalty: it earmarks weight so one principal cannot back several open
+    ;; proposals at once, and that is all it does. Nothing is burned and nothing
+    ;; is transferred anywhere.
+    ;;
+    ;; Confiscating it was considered and dropped. Spam is already impossible:
+    ;; PROPOSE_INTERVAL allows one proposal at a time contract-wide, a failed
+    ;; proposer sits out a cooldown, and MIN_WEIGHT can only be reached by a
+    ;; contribution that is itself non-refundable. Entry already costs real
+    ;; money, so charging again for a failure -- usually caused by other people
+    ;; not voting -- would only deter people from proposing at all.
     (map-set LockedWeight proposer
       (if (> (locked-of proposer) bond)
         (- (locked-of proposer) bond)
         u0
       ))
 
-    (if vetoed
-      ;; VETOED. A VETO_QUORUM minority blocked it. The proposer cleared the bar
-      ;; they were asked to clear, so the bond comes back. The cooldown still
-      ;; applies so a contested week is not immediately re-submitted by the same
-      ;; principal.
+        (if vetoed
+      ;; FAILED by veto. A VETO_QUORUM minority blocked a week that may well
+      ;; have passed its vote.
       (begin
         (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
-        (map-set Briefs briefDate (merge brief { status: STATUS_VETOED }))
+        (map-set Briefs briefDate
+          (merge brief { status: STATUS_FAILED, reason: "vetoed" }))
         (print {
-          event: "settle",
-          briefDate: briefDate,
-          outcome: "vetoed",
-          vetoWeight: (get vetoWeight brief),
-          eligible: eligible,
-          bondReturned: bond,
+          event: "conclude", briefDate: briefDate, outcome: "failed",
+          reason: "vetoed", vetoWeight: (get vetoWeight brief), eligible: eligible,
         })
-        (ok STATUS_VETOED)
+        (ok STATUS_FAILED)
       )
     (if (not quorumMet)
-      ;; EXPIRED. Nobody showed up. The proposer did nothing wrong, so the bond
-      ;; is released and the week reopens.
+      ;; FAILED on turnout. Too few voted to decide anything either way.
       (begin
         (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
-        (map-set Briefs briefDate (merge brief { status: STATUS_EXPIRED }))
+        (map-set Briefs briefDate
+          (merge brief { status: STATUS_FAILED, reason: "no-quorum" }))
         (print {
-          event: "settle",
-          briefDate: briefDate,
-          outcome: "expired",
-          cast: cast,
-          eligible: eligible,
+          event: "conclude", briefDate: briefDate, outcome: "failed",
+          reason: "no-quorum", cast: cast, eligible: eligible,
           voterCount: (get voterCount brief),
-          bondReturned: bond,
         })
-        (ok STATUS_EXPIRED)
+        (ok STATUS_FAILED)
       )
       (if (not thresholdMet)
-        ;; REJECTED. Voters looked and said no. The bond is BURNED, so the
-        ;; proposer permanently loses that much say. The sats stay in the pool
-        ;; either way, because there is nowhere else for them to go, so the
-        ;; penalty is influence rather than principal.
+        ;; FAILED on the vote. Voters turned up and said no.
         (begin
-          (map-set Weights proposer
-            (if (> (get-weight proposer) bond)
-              (- (get-weight proposer) bond)
-              u0
-            ))
-          (var-set TotalWeight
-            (if (> (var-get TotalWeight) bond)
-              (- (var-get TotalWeight) bond)
-              u0
-            ))
           (map-set ProposeCooldownUntil proposer (+ stacks-block-height VOTE_WINDOW))
-          (map-set Briefs briefDate (merge brief { status: STATUS_REJECTED }))
+          (map-set Briefs briefDate
+            (merge brief { status: STATUS_FAILED, reason: "voted-down" }))
           (print {
-            event: "settle",
-            briefDate: briefDate,
-            outcome: "rejected",
-            yesWeight: (get yesWeight brief),
+            event: "conclude", briefDate: briefDate, outcome: "failed",
+            reason: "voted-down", yesWeight: (get yesWeight brief),
             noWeight: (get noWeight brief),
-            bondBurned: bond,
           })
-          (ok STATUS_REJECTED)
+          (ok STATUS_FAILED)
         )
-        ;; SETTLED. Pay every correspondent, then the proposer's fee.
+        (if poolShort
+        ;; FAILED because the pool can no longer cover the snapshotted draw.
+        ;; Recoverable: the week reopens and can be proposed again at today's
+        ;; smaller draw.
+        ;;
+        ;; NO COOLDOWN here, unlike the other failures. This is the one cause
+        ;; least attributable to the proposer -- they wrote a valid brief, won
+        ;; the vote, and the pool shrank underneath them. Cooling them down
+        ;; would block the person most motivated to re-propose it.
         (begin
+          (map-set Briefs briefDate
+            (merge brief { status: STATUS_FAILED, reason: "pool-short" }))
+          (print {
+            event: "conclude", briefDate: briefDate, outcome: "failed",
+            reason: "pool-short", draw: draw,
+          })
+          (ok STATUS_FAILED)
+        )
+        ;; PASSED. Pay every correspondent. There is no proposer fee: the whole
+        ;; draw goes to the people who did the reporting.
+        (begin
+          ;; Belt and braces. `propose-brief` already rejects a week whose draw
+          ;; cannot cover one sat per signal, against these same snapshotted
+          ;; values, so this cannot currently fire. It stays as a guard in case
+          ;; that check is ever weakened.
           (asserts! (> perSignal u0) ERR_DUST_DRAW)
           ;; Mark terminal BEFORE paying: effects before interaction, and the
-          ;; week can never be re-proposed or re-settled.
-          (map-set Briefs briefDate (merge brief { status: STATUS_SETTLED }))
+          ;; week can never be re-proposed or re-concluded.
+          (map-set Briefs briefDate
+            (merge brief { status: STATUS_PASSED, reason: "paid" }))
           (asserts!
             (get ok (fold pay-entry entries {
-              briefDate: briefDate,
-              perSignal: perSignal,
-              ok: true,
+              briefDate: briefDate, perSignal: perSignal, ok: true,
             }))
             ERR_PAYOUT_FAILED
           )
-          ;; Proposer fee, keyed with `fee-ref`, whose tuple shape differs from
-          ;; an entry's so collision is structurally impossible.
-          (and (> fee u0)
-            (unwrap!
-              (contract-call? .news-treasury execute-payout proposer fee
-                (fee-ref briefDate proposer)
-              )
-              ERR_PAYOUT_FAILED
-            ))
           (print {
-            event: "settle",
-            briefDate: briefDate,
-            outcome: "settled",
-            draw: draw,
-            proposerFee: fee,
-            perSignal: perSignal,
+            event: "conclude", briefDate: briefDate, outcome: "passed",
+            draw: draw, perSignal: perSignal,
             totalSignals: (get totalSignals brief),
             entryCount: (get entryCount brief),
-            yesWeight: (get yesWeight brief),
-            noWeight: (get noWeight brief),
+            yesWeight: (get yesWeight brief), noWeight: (get noWeight brief),
           })
-          (ok STATUS_SETTLED)
+          (ok STATUS_PASSED)
+        )
         )
       )
     )

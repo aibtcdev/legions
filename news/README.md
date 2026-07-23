@@ -116,7 +116,7 @@ correspondent in their own week. That case is tested.
 | `propose-brief(week, title, description, inscriptions, entries)` | contributor | open the vote |
 | `vote(week, support)` | contributor | yes or no, weighted |
 | `veto(week)` | contributor | object after voting closes |
-| `settle(week)` | **anyone** | conclude and, if passed, pay everyone |
+| `conclude(week)` | **anyone** | work out the outcome and, if passed, pay everyone |
 
 A proposal carries a week, a title and description, up to 7 inscription ids, and
 up to 30 `{recipient, signals}` entries. **There is no free-form recipient field
@@ -158,6 +158,7 @@ parameter; the only vote is yes or no on a week.
 |---|---|---|
 | `VOTE_WINDOW` | 36 stacks blocks | TEST TIMING, production is 1008 burn blocks |
 | `VETO_WINDOW` | 12 blocks | objection window after voting closes |
+| `CONCLUDE_WINDOW` | 12 blocks | how long anyone has to conclude before the week lapses |
 | `VOTING_THRESHOLD` | 66% | of cast weight |
 | `VOTING_QUORUM` | 15% | of eligible weight |
 | `VETO_QUORUM` | 15% | of eligible weight needed to block |
@@ -174,17 +175,39 @@ parameter; the only vote is yes or no on a week.
 `MIN_WEIGHT` votes yes alone, reaches 100% of cast weight, and unilaterally
 spends a slice of everyone else's pool. See the `quorum is load-bearing` test.
 
-**Four outcomes:**
+**Read the parameters from chain, do not hardcode them.** `get-params` returns
+every constant in one call, and `get-phase(week)` returns
+`none | voting | veto | concludable | lapsed | closed` so nothing has to
+recompute window arithmetic.
 
-- `SETTLED` quorum and threshold met, not vetoed. Correspondents paid, bond
-  released, proposer paid the fee.
-- `VETOED` objections reached `VETO_QUORUM` of eligible weight. Nobody paid.
-  Bond **returned**, since the proposer cleared the bar they were set and a
-  minority chose to block anyway.
-- `REJECTED` quorum met, threshold missed. Voters looked and said no. The bond
-  is **burned**: the proposer permanently loses that much say. No sats move,
-  because there is nowhere for them to go.
-- `EXPIRED` quorum never met. Nobody looked. Bond **released in full**.
+**Five outcomes, each naming a different cause:**
+
+| status | | bond |
+|---|---|---|
+| `1` SETTLED | passed and paid | released |
+| `2` REJECTED | voters turned up and said no | **burned** |
+| `3` NO_QUORUM | too few voted to decide anything | returned |
+| `4` VETOED | a 15% minority blocked it | returned |
+| `5` EXPIRED | nobody concluded it in time | returned |
+
+Only REJECTED is a judgement against the proposer, so only REJECTED costs them.
+The other three are failures of everyone else to show up, object, or press the
+button, and charging the proposer for those would end proposing.
+
+**Money moves in exactly one of the five.** SETTLED pays out; the other four
+move no sBTC at all.
+
+### Why a conclude deadline exists
+
+The draw is read at **conclude** time, not at propose time. Without a deadline,
+a week that passed its vote when the pool held 28,000,000 could be concluded at
+any future point and take 0.5% of whatever the pool held *then*. Grow the pool
+tenfold and an old passed brief pays out tenfold, and a recipient has every
+incentive to sit on one and wait.
+
+`CONCLUDE_WINDOW` bounds the payout to roughly the pool the voters were actually
+approving. It also stops an un-concluded brief locking the proposer's bond
+forever.
 
 Slashing a proposer because other people failed to show up would end proposing
 within a week. Apathy costs a delay, never a bond.
