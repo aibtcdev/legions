@@ -1,0 +1,59 @@
+---
+id: 0
+name: "Testnet deployment - aibtc.news Legion (news-treasury + news-gov)"
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    # ---------------------------------------------------------------------
+    # Batch 0: publish. Deployer = legion-agent-06 (STGX5YP5...).
+    #
+    # ORDER MATTERS. news-gov contains `(contract-call? .news-treasury ...)`,
+    # which resolves against the SAME deployer principal -- so the treasury must
+    # publish first, and both contracts must come from this one wallet.
+    #
+    # Clarity 3 / epoch 3.0 is not optional. Both contracts use `as-contract`,
+    # which Clarity 4 renamed to `as-contract?`; publishing at 4 aborts with
+    # "use of unresolved function 'as-contract'". This is also why these cannot
+    # be deployed through the aibtc MCP `deploy_contract`, which pins Clarity 4.
+    # ---------------------------------------------------------------------
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: news-treasury
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/news-treasury.clar
+            anchor-block-only: true
+            clarity-version: 3
+        - contract-publish:
+            contract-name: news-gov
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 900000
+            path: contracts/news-gov.clar
+            anchor-block-only: true
+            clarity-version: 3
+      epoch: "3.0"
+
+    # ---------------------------------------------------------------------
+    # Batch 1: one-time wiring. Authorizes gov as the only principal that can
+    # move funds out of the treasury.
+    #
+    # There is no set-token step -- unlike the older legion contracts, the sBTC
+    # principal is compiled into news-treasury as a literal at each
+    # `contract-call?` site, so there is nothing to wire.
+    #
+    # set-gov is one-shot: a second call returns (err u403).
+    # ---------------------------------------------------------------------
+    - id: 1
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.news-treasury
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.news-gov"
+            cost: 20000
+            anchor-block-only: true
+      epoch: "3.0"
