@@ -23,16 +23,24 @@
 ;; NO ORACLE. Clarity cannot read a Bitcoin inscription, so this contract does
 ;; not try. The entries are stored in full and readable via `get-brief-entries`.
 ;; Voters are agents: they check the list against aibtc.news themselves before
-;; voting. A tampered list gets voted down and costs the proposer their bond.
+;; voting. A tampered list gets voted down and the week pays nobody. The proposer
+;; keeps their bond either way -- it is a lock, never a penalty (see conclude).
 ;; Voting without checking is the voter's problem, not the contract's.
 ;;
-;; TWO OUTCOMES. `reason` says which cause:
+;; THREE OUTCOMES. `reason` says the finer cause:
 ;;
-;;   PASSED  reason "paid"          correspondents paid.
-;;   FAILED  reason "voted-down"    voters turned up and said no.
-;;           reason "no-quorum"     too few voted to decide anything.
-;;           reason "vetoed"        a VETO_QUORUM minority blocked it.
-;;           reason "pool-short"    the snapshotted draw no longer fits the pool.
+;;   PASSED   reason "paid"          correspondents paid.
+;;   FAILED   reason "voted-down"    voters turned up and said no.
+;;            reason "no-quorum"     too few voted to decide anything.
+;;            reason "vetoed"        a VETO_QUORUM minority blocked it.
+;;            reason "pool-short"    the snapshotted draw no longer fits the pool.
+;;   EXPIRED  reason "not-concluded" the conclude window closed with no conclude.
+;;
+;; PASSED and FAILED are a decided vote. EXPIRED is not a judgement: nobody
+;; concluded the week in time, so it was never decided. It needs no transaction
+;; to reach that state -- past the conclude window the views report it EXPIRED
+;; and the bond is already free (see locked-of / BondUnlockAt). conclude is only
+;; required to PAY a passed week.
 ;;
 ;; NOTHING IS EVER BURNED OR CONFISCATED. The bond is a lock: it earmarks weight
 ;; while a brief is open so one principal cannot stack unlimited proposals, and
@@ -93,9 +101,13 @@
 ;; that, and it does it better. An earlier version used a 12-block deadline as
 ;; the only defence, which turned a slow hour into permanently unpaid work and
 ;; made an always-on keeper mandatory. With the snapshot in place, this window
-;; does one narrow job: it stops a brief nobody ever concludes from sitting OPEN
-;; forever, holding its proposer's bond locked and blocking that week from ever
-;; being re-proposed.
+;; does one narrow job: it is the deadline past which a passed week can no
+;; longer be PAID. Miss it and the week EXPIRES (reason "not-concluded").
+;;
+;; A missed window strands nothing. The week EXPIRES: the bond is time-gated
+;; (BondUnlockAt), so it frees itself at this deadline with no conclude call, and
+;; the week reopens for re-proposal on its own. So the only thing lost by
+;; expiring is the payout of a week that had passed -- which is why:
 ;;
 ;; Keep it generous. A payout that was voted through should never be lost
 ;; because everyone was busy.
@@ -116,9 +128,14 @@
 (define-constant MIN_PARTICIPANTS u2)
 
 ;; GLOBAL rate limit on proposals: the whole contract accepts one every
-;; PROPOSE_INTERVAL blocks, whoever sends it. Set to a full week lifecycle so
-;; weeks are strictly serialized -- one resolves completely before the next can
-;; be opened.
+;; PROPOSE_INTERVAL blocks, whoever sends it.
+;;
+;; Currently VOTE_WINDOW + VETO_WINDOW, the minimum the KEEP THIS note below
+;; allows. That is SHORTER than the full lifecycle once CONCLUDE_WINDOW is
+;; counted (48 vs 96), so a second week can be opened while a prior one is still
+;; concludable: weeks are NOT strictly serialized, and at most two draws can land
+;; in one lifecycle. Setting this to VOTE + VETO + CONCLUDE would serialize them
+;; completely -- one live brief at a time -- at the cost of a slower cadence.
 ;;
 ;; Without this, nothing bounded how many weeks could be open at once. Week keys
 ;; are strings that pass a shape check, so "2027-01-01" is proposable today, and
@@ -134,7 +151,7 @@
 ;;
 ;; A per-principal cap would not close it, because an attacker rotates accounts.
 ;; The per-principal proposer cooldown below closes only the sequential form
-;; (propose, expire, re-propose); it does not stop bulk pre-emption up front.
+;; (propose, fail, re-propose); it does not stop bulk pre-emption up front.
 ;;
 ;; KEEP THIS >= VOTE_WINDOW + VETO_WINDOW. If it is shorter, weeks overlap and
 ;; the drain rate multiplies by the ratio.
@@ -152,9 +169,11 @@
 ;; equivalent of 10% of a 0.5% draw, so it scales with the pool automatically
 ;; and never needs a governance vote.
 ;;
-;; The bond is WEIGHT, not sats. Losing it means permanently losing that much
-;; say. The sats stay in the pool either way, because there is nowhere else for
-;; them to go.
+;; The bond is WEIGHT, not sats, and it is a lock rather than a stake: it
+;; earmarks the proposer's own voting weight for the life of the brief and is
+;; released on every outcome. It is never denominated in sats because contributed
+;; sats are one-way and cannot be handed back, so weight is the only thing a bond
+;; can lock.
 (define-constant BOND_BPS u5)
 
 ;; Absolute floor under the bond. The percentage bond is economically nothing
@@ -168,11 +187,13 @@
 ;; did the reporting.
 
 ;; -- Week lifecycle states --
-;; Two terminal states. The cause lives in `reason`, so a UI switches on two
-;; values and shows the detail when it wants to.
+;; Three end states. PASSED and FAILED are a decided vote; EXPIRED is a week
+;; nobody concluded in time. The finer cause lives in `reason`. Only PASSED is
+;; permanent -- FAILED and EXPIRED both reopen the week for a fresh proposal.
 (define-constant STATUS_OPEN u0)
-(define-constant STATUS_PASSED u1) ;; paid out
-(define-constant STATUS_FAILED u2) ;; voted down, no quorum, vetoed, or never concluded
+(define-constant STATUS_PASSED u1) ;; paid out, permanent
+(define-constant STATUS_FAILED u2) ;; voted down, no quorum, vetoed, or pool-short
+(define-constant STATUS_EXPIRED u3) ;; conclude window closed with no conclude; bond returned
 
 ;; -------------------------------------------------------------------
 ;; Errors
@@ -216,8 +237,20 @@
 )
 (define-data-var TotalWeight uint u0)
 
-;; Sum of a principal's OPEN (unreleased) proposal bonds, in weight.
+;; Sum of a principal's OPEN (unreleased) proposal bonds, in weight. This is the
+;; RAW figure; `locked-of` gates it by BondUnlockAt below, so a bond stops
+;; counting the moment its week's conclude window closes -- with no transaction.
 (define-map LockedWeight
+  principal
+  uint
+)
+
+;; The height at which a proposer's bond stops locking, set at propose to the
+;; week's lapse deadline (voteEnd + VETO_WINDOW + CONCLUDE_WINDOW). Past it,
+;; `locked-of` returns u0 even though nobody has concluded: an un-concluded week
+;; FAILS on its own and frees the bond, rather than holding it hostage to a
+;; conclude call that Clarity cannot fire on a timer.
+(define-map BondUnlockAt
   principal
   uint
 )
@@ -232,10 +265,11 @@
 ;; honest failure costs the newsroom nothing.
 ;;
 ;; NOTE: this is set in `conclude`, not at propose. A brief nobody ever
-;; concludes therefore leaves its proposer uncooldowned, and each such brief
-;; keeps its bond locked. That is precisely what the bond bounds: free weight
-;; must cover every open bond, so a minimum-weight member can hold exactly one
-;; outstanding brief at a time.
+;; concludes therefore leaves its proposer uncooldowned -- which is correct: a
+;; lapse is not the proposer's fault (they wrote a valid brief; someone else
+;; failed to press a button), so it carries no cooldown, exactly as an explicit
+;; not-concluded conclude does. The bond does NOT stay locked in that case: it is
+;; time-gated by BondUnlockAt and frees itself at the lapse deadline.
 (define-map ProposeCooldownUntil
   principal
   uint
@@ -267,6 +301,12 @@
     ;; being slow.
     draw: uint,
     createdAt: uint,
+    ;; Which re-proposal of this date this is: 1 on first propose, +1 each time
+    ;; the week reopens after a FAILED or EXPIRED round. It namespaces the Votes
+    ;; and Vetoes maps so a fresh round starts with an empty tally rather than
+    ;; inheriting the previous round's entries (which are keyed by date and
+    ;; cannot be enumerated to delete).
+    round: uint,
     voteEnd: uint,
     eligibleSnapshot: uint,
     yesWeight: uint,
@@ -318,9 +358,13 @@
   (list 30 principal)
 )
 
+;; Keyed by (date, round, voter): the round discriminator is what lets a
+;; re-proposed week start with a clean tally. Without it a voter from a failed
+;; round would collide with themselves and be locked out of the re-proposal.
 (define-map Votes
   {
     briefDate: (string-ascii 10),
+    round: uint,
     voter: principal,
   }
   {
@@ -329,10 +373,11 @@
   }
 )
 
-;; One veto per principal per week.
+;; One veto per principal per week, per round.
 (define-map Vetoes
   {
     briefDate: (string-ascii 10),
+    round: uint,
     voter: principal,
   }
   uint
@@ -378,19 +423,23 @@
       "passed"
       (if (is-eq (get status brief) STATUS_FAILED)
         "failed"
-        (if (< stacks-block-height (get voteEnd brief))
-          "voting"
-          (if (< stacks-block-height (+ (get voteEnd brief) VETO_WINDOW))
-            "veto"
-            ;; "concludable" must have an upper bound. Past CONCLUDE_WINDOW the
-            ;; week can no longer pay anyone -- calling conclude then writes
-            ;; not-concluded / FAILED -- so reporting it as still concludable
-            ;; would tell correspondents to relax at the one moment waiting
-            ;; actually costs them money.
-            (if (< stacks-block-height
-                   (+ (+ (get voteEnd brief) VETO_WINDOW) CONCLUDE_WINDOW))
-              "concludable"
-              "lapsed"
+        (if (is-eq (get status brief) STATUS_EXPIRED)
+          "expired"
+          (if (< stacks-block-height (get voteEnd brief))
+            "voting"
+            (if (< stacks-block-height (+ (get voteEnd brief) VETO_WINDOW))
+              "veto"
+              ;; "concludable" must have an upper bound. Past CONCLUDE_WINDOW the
+              ;; week can no longer pay anyone -- calling conclude then writes
+              ;; EXPIRED -- so reporting it as still concludable would tell
+              ;; correspondents to relax at the one moment waiting costs them
+              ;; money. Report the OPEN-but-past-window state as "expired" too,
+              ;; the same word the terminal status uses.
+              (if (< stacks-block-height
+                     (+ (+ (get voteEnd brief) VETO_WINDOW) CONCLUDE_WINDOW))
+                "concludable"
+                "expired"
+              )
             )
           )
         )
@@ -408,8 +457,19 @@
   (var-get TotalWeight)
 )
 
+;; A bond locks weight only while its week is still live. Past the conclude
+;; window the week can no longer pay, so it has effectively FAILED and the bond
+;; is free -- whether or not anyone has called conclude. Gating the raw
+;; LockedWeight by BondUnlockAt makes that release automatic and tx-free.
+(define-read-only (bond-unlock-at (who principal))
+  (default-to u0 (map-get? BondUnlockAt who))
+)
+
 (define-read-only (locked-of (who principal))
-  (default-to u0 (map-get? LockedWeight who))
+  (if (< stacks-block-height (bond-unlock-at who))
+    (default-to u0 (map-get? LockedWeight who))
+    u0
+  )
 )
 
 ;; Weight not earmarked by an open proposal bond.
@@ -438,8 +498,25 @@
   (default-to u0 (map-get? ProposeCooldownUntil who))
 )
 
+;; True when a week is OPEN in storage only because nobody has concluded it, yet
+;; its conclude window has already closed. Such a week can no longer pay, so
+;; every view reports it as EXPIRED / not-concluded -- the exact result a late
+;; conclude would eventually write. The bond is already free (see locked-of).
+(define-read-only (lapsed-open (status uint) (voteEnd uint))
+  (and
+    (is-eq status STATUS_OPEN)
+    (>= stacks-block-height (+ voteEnd VETO_WINDOW CONCLUDE_WINDOW))
+  )
+)
+
 (define-read-only (get-brief (briefDate (string-ascii 10)))
-  (map-get? Briefs briefDate)
+  (match (map-get? Briefs briefDate)
+    brief (some (if (lapsed-open (get status brief) (get voteEnd brief))
+      (merge brief { status: STATUS_EXPIRED, reason: "not-concluded" })
+      brief
+    ))
+    none
+  )
 )
 
 ;; Title and description as submitted. Read this before voting.
@@ -460,29 +537,42 @@
 
 (define-read-only (get-brief-status (briefDate (string-ascii 10)))
   (match (map-get? Briefs briefDate)
-    brief (some (get status brief))
+    brief (some (if (lapsed-open (get status brief) (get voteEnd brief))
+      STATUS_EXPIRED
+      (get status brief)
+    ))
     none
   )
 )
 
+;; The record for the CURRENT round of a date. Prior rounds are not queryable
+;; (their keys are not enumerable), which is fine: only the live round matters.
 (define-read-only (get-vote-record
     (briefDate (string-ascii 10))
     (voter principal)
   )
-  (map-get? Votes {
-    briefDate: briefDate,
-    voter: voter,
-  })
+  (match (map-get? Briefs briefDate)
+    brief (map-get? Votes {
+      briefDate: briefDate,
+      round: (get round brief),
+      voter: voter,
+    })
+    none
+  )
 )
 
 (define-read-only (get-veto-record
     (briefDate (string-ascii 10))
     (voter principal)
   )
-  (map-get? Vetoes {
-    briefDate: briefDate,
-    voter: voter,
-  })
+  (match (map-get? Briefs briefDate)
+    brief (map-get? Vetoes {
+      briefDate: briefDate,
+      round: (get round brief),
+      voter: voter,
+    })
+    none
+  )
 )
 
 ;; Current draw against the pool, before any week is proposed.
@@ -648,8 +738,9 @@
 ;; -------------------------------------------------------------------
 ;; Public: propose-brief
 ;; -------------------------------------------------------------------
-;; Open the vote on one week. The caller locks a bond scaled to total weight,
-;; which they forfeit only if voters reject the week on its merits.
+;; Open the vote on one week. The caller locks a bond scaled to total weight.
+;; The bond is a lock on their own voting weight, released on every outcome; it
+;; is never forfeited, whatever the vote decides (see conclude).
 (define-public (propose-brief
     (briefDate (string-ascii 10))
     (title (string-ascii 128))
@@ -668,6 +759,13 @@
       (alreadyLocked (locked-of tx-sender))
       (snapshot (var-get TotalWeight))
       (voteEnd (+ stacks-block-height VOTE_WINDOW))
+      ;; The height at which this week can no longer pay. Past it the bond frees
+      ;; itself (see locked-of / BondUnlockAt). Always later than any prior brief
+      ;; from this proposer, since createdAt only advances, so it is the max.
+      (lapseAt (+ voteEnd VETO_WINDOW CONCLUDE_WINDOW))
+      ;; A re-proposal of a failed/expired date bumps the round, giving the
+      ;; Votes/Vetoes maps a fresh keyspace. First proposal of a date is round 1.
+      (round (match existing prev (+ (get round prev) u1) u1))
       (draw (/ (* pool DRAW_BPS) u10000))
       (entryCheck (fold check-entry entries {
         seen: (list),
@@ -675,11 +773,22 @@
       }))
       (totalSignals (fold sum-signals entries u0))
     )
-    ;; A live vote blocks a second proposal; a settled week is terminal.
+    ;; A live vote blocks a second proposal; a PASSED week is terminal. A week
+    ;; that LAPSED (OPEN but past its conclude window) has failed on its own and
+    ;; is re-proposable immediately, with no conclude call required first -- so
+    ;; the block is on a still-live week, not merely a stored-OPEN one.
     (match existing
-      prev (begin
-        (asserts! (not (is-eq (get status prev) STATUS_OPEN)) ERR_BRIEF_ALREADY_OPEN)
+      prev (let (
+          (prevLapseAt (+ (get voteEnd prev) VETO_WINDOW CONCLUDE_WINDOW))
+        )
         (asserts! (not (is-eq (get status prev) STATUS_PASSED)) ERR_BRIEF_CONCLUDED)
+        (asserts!
+          (not (and
+            (is-eq (get status prev) STATUS_OPEN)
+            (< stacks-block-height prevLapseAt)
+          ))
+          ERR_BRIEF_ALREADY_OPEN
+        )
         true
       )
       true
@@ -728,6 +837,7 @@
       description: description,
     })
     (map-set LockedWeight tx-sender (+ alreadyLocked bond))
+    (map-set BondUnlockAt tx-sender lapseAt)
     (map-set BriefEntries briefDate entries)
     (map-set BriefRecipients briefDate (get seen entryCheck))
     (map-set Briefs briefDate {
@@ -739,6 +849,7 @@
       bond: bond,
       draw: draw,
       createdAt: stacks-block-height,
+      round: round,
       voteEnd: voteEnd,
       ;; Quorum denominator excludes the proposer, who cannot vote on their own
       ;; week. Otherwise a large proposer would make quorum unreachable.
@@ -780,11 +891,14 @@
       (brief (unwrap! (map-get? Briefs briefDate) ERR_NO_BRIEF))
       (recipients (default-to (list) (map-get? BriefRecipients briefDate)))
       (weight (get-weight tx-sender))
+      (round (get round brief))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_VOTE_CLOSED)
     (asserts! (< stacks-block-height (get voteEnd brief)) ERR_VOTE_CLOSED)
     (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
-    ;; The proposer has a bond at stake and cannot also vote their own week up.
+    ;; The proposer is excluded from voting their own week up: they are the one
+    ;; party with a direct interest in it passing, and the quorum denominator
+    ;; (eligibleSnapshot) already excludes their weight to match.
     (asserts! (not (is-eq tx-sender (get proposer brief))) ERR_SELF_VOTE)
     ;; Producers do not vote themselves a paycheque. A correspondent named in
     ;; this week is excluded from this week only; they may vote on any other.
@@ -792,6 +906,7 @@
     (asserts!
       (is-none (map-get? Votes {
         briefDate: briefDate,
+        round: round,
         voter: tx-sender,
       }))
       ERR_ALREADY_VOTED
@@ -799,6 +914,7 @@
 
     (map-set Votes {
       briefDate: briefDate,
+      round: round,
       voter: tx-sender,
     } {
       support: support,
@@ -819,6 +935,7 @@
     (print {
       event: "vote",
       briefDate: briefDate,
+      round: round,
       voter: tx-sender,
       support: support,
       weight: weight,
@@ -844,6 +961,7 @@
       (voteEnd (get voteEnd brief))
       (vetoEnd (+ voteEnd VETO_WINDOW))
       (weight (get-weight tx-sender))
+      (round (get round brief))
     )
     (asserts! (is-eq (get status brief) STATUS_OPEN) ERR_BRIEF_CONCLUDED)
     (asserts! (>= stacks-block-height voteEnd) ERR_VETO_WINDOW)
@@ -852,12 +970,14 @@
     (asserts!
       (is-none (map-get? Vetoes {
         briefDate: briefDate,
+        round: round,
         voter: tx-sender,
       }))
       ERR_ALREADY_VETOED
     )
     (map-set Vetoes {
       briefDate: briefDate,
+      round: round,
       voter: tx-sender,
     } weight)
     (map-set Briefs briefDate
@@ -866,6 +986,7 @@
     (print {
       event: "veto",
       briefDate: briefDate,
+      round: round,
       voter: tx-sender,
       weight: weight,
       vetoWeight: (+ (get vetoWeight brief) weight),
@@ -954,19 +1075,22 @@
       ))
 
         (if lapsed
-      ;; FAILED because nobody concluded it in time. The bond is released and
-      ;; the week reopens, so this is recoverable: propose it again.
+      ;; EXPIRED because nobody concluded it in time. Not a failure of the vote:
+      ;; the week was never decided. The bond is released and the week reopens,
+      ;; so this is recoverable: propose it again. This branch only runs if
+      ;; someone calls conclude late; if nobody ever does, the views report the
+      ;; same EXPIRED state anyway (see lapsed-open) and the bond is already free.
       ;;
       ;; NO COOLDOWN. Like pool-short, this is not attributable to the proposer
       ;; -- they wrote a valid brief and someone else failed to press a button.
       (begin
         (map-set Briefs briefDate
-          (merge brief { status: STATUS_FAILED, reason: "not-concluded" }))
+          (merge brief { status: STATUS_EXPIRED, reason: "not-concluded" }))
         (print {
-          event: "conclude", briefDate: briefDate, outcome: "failed",
+          event: "conclude", briefDate: briefDate, outcome: "expired",
           reason: "not-concluded", voteEnd: (get voteEnd brief),
         })
-        (ok STATUS_FAILED)
+        (ok STATUS_EXPIRED)
       )
     (if vetoed
       ;; FAILED by veto. A VETO_QUORUM minority blocked a week that may well

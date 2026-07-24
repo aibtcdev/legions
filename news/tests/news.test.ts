@@ -78,6 +78,11 @@ function lockedOf(who: string): bigint {
   return (r.result as any).value as bigint;
 }
 
+function freeWeight(who: string): bigint {
+  const r = simnet.callReadOnlyFn(GOV, "get-free-weight", [Cl.principal(who)], deployer);
+  return (r.result as any).value as bigint;
+}
+
 /** Send sBTC to the pool and receive voting weight. The only way in. */
 function contribute(who: string, amount = CONTRIB) {
   faucet(who);
@@ -638,7 +643,7 @@ describe("the draw is snapshotted at propose, so a late conclude cannot inflate 
     expect(sbtcOf(corrA)).toBe(aBefore + BigInt(PAY_A));
   });
 
-  it("fails as not-concluded once the conclude window closes, paying nobody", () => {
+  it("EXPIRES, not FAILS, once the conclude window closes, paying nobody", () => {
     fundedLegion();
     expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
     expect(vote(voter1, true).result).toBeOk(Cl.bool(true));
@@ -646,7 +651,7 @@ describe("the draw is snapshotted at propose, so a late conclude cannot inflate 
     simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
 
     const aBefore = sbtcOf(corrA);
-    expect(settle().result).toBeOk(Cl.uint(2)); // FAILED
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED, not FAILED
     expect(sbtcOf(corrA)).toBe(aBefore); // nobody paid
     expect(poolOf()).toBe(BigInt(POOL)); // no money moved
     expect(weightOf(proposer)).toBe(BigInt(CONTRIB)); // bond released, not burned
@@ -663,6 +668,123 @@ describe("the draw is snapshotted at propose, so a late conclude cannot inflate 
     simnet.callPublicFn(GOV, "contribute", [Cl.uint(10_000)], proposer);
     const many = entries([[corrA, 5000]]); // draw of 50 cannot cover 5000 signals
     expect(propose(proposer, WEEK, many).result).toBeErr(Cl.uint(419));
+  });
+});
+
+describe("a lapsed week EXPIRES and frees the bond with NO conclude call", () => {
+  // The core requirement: if nobody concludes within the conclude window, the
+  // week must fail and the bond must return on its own. Clarity cannot fire a
+  // conclude on a timer, so the release is DERIVED from block height rather than
+  // written by a transaction. conclude is then needed only to PAY a passed week.
+
+  it("locks the bond while the week is live", () => {
+    fundedLegion();
+    expect(lockedOf(proposer)).toBe(0n); // nothing locked before proposing
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(lockedOf(proposer)).toBeGreaterThan(0n);
+    expect(freeWeight(proposer)).toBe(BigInt(CONTRIB) - lockedOf(proposer));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB)); // weight itself untouched
+  });
+
+  it("frees the bond the moment the conclude window closes, with no conclude", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(lockedOf(proposer)).toBeGreaterThan(0n);
+
+    // Advance past the whole lifecycle. Crucially, never call conclude.
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
+
+    expect(lockedOf(proposer)).toBe(0n); // released by the clock, not a tx
+    expect(freeWeight(proposer)).toBe(BigInt(CONTRIB)); // full weight usable again
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB)); // nothing burned
+    expect(poolOf()).toBe(BigInt(POOL)); // no money moved
+  });
+
+  it("holds the bond until exactly the deadline, not a block before", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    const bond = lockedOf(proposer);
+    // Stop one block short of the lapse deadline.
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW - 1);
+    expect(lockedOf(proposer)).toBe(bond); // still locked
+  });
+
+  it("reports EXPIRED / not-concluded to every view once lapsed, without a tx", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
+
+    expect(briefStatus()).toBe(3n); // EXPIRED, though no conclude was called
+    const phase = Cl.prettyPrint(
+      simnet.callReadOnlyFn(GOV, "get-phase", [Cl.stringAscii(WEEK)], deployer).result as any,
+    );
+    expect(phase).toContain("expired");
+    const brief = Cl.prettyPrint(
+      simnet.callReadOnlyFn(GOV, "get-brief", [Cl.stringAscii(WEEK)], deployer).result as any,
+    );
+    expect(brief).toContain("status: u3");
+    expect(brief).toContain('reason: "not-concluded"');
+  });
+
+  it("lets the week be re-proposed with no conclude first", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
+    // No settle() anywhere. The lapsed week reopens on its own.
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+  });
+
+  it("still blocks a re-proposal while the week is genuinely live", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    // Mid-window: a second proposal for the same live week is rejected.
+    expect(propose().result).toBeErr(Cl.uint(403));
+  });
+
+  it("a late conclude on an expired week is harmless: same result, bond already free", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
+    expect(lockedOf(proposer)).toBe(0n); // already free by the clock
+    // Someone concludes anyway; it writes the same outcome and moves nothing.
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED
+    expect(lockedOf(proposer)).toBe(0n);
+    expect(poolOf()).toBe(BigInt(POOL));
+  });
+});
+
+describe("re-proposing a week does not lock out its prior-round voters", () => {
+  // Votes and Vetoes are namespaced by a per-date round. Without it, a principal
+  // who voted (or vetoed) a round that FAILED or EXPIRED would be permanently
+  // barred from the re-proposal under the same date, while their weight was
+  // zeroed from the fresh tally -- so re-proposals would shed their electorate.
+
+  it("a voter from an expired round can vote again in the re-proposal", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true)); // round 1
+    // Let it EXPIRE: no cooldown, auto-reopens, votes NOT cleared from storage.
+    simnet.mineEmptyBlocks(VOTE_WINDOW + VETO_WINDOW + CONCLUDE_WINDOW + 1);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK)); // re-propose, same date
+
+    // voter1 has a round-1 Votes entry; they must still vote the fresh round.
+    expect(vote(voter1, true).result).toBeOk(Cl.bool(true)); // round 2
+    expect(vote(voter2, true).result).toBeOk(Cl.bool(true));
+    closeWindow();
+    expect(settle().result).toBeOk(Cl.uint(1)); // PASSED, electorate intact
+  });
+
+  it("a vetoer from an expired round can veto the re-proposal", () => {
+    fundedLegion();
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK));
+    closeVoting(); // into the veto window
+    expect(veto(voter1).result).toBeOk(Cl.bool(true)); // round 1 veto
+    // Do not conclude: the week expires.
+    simnet.mineEmptyBlocks(VETO_WINDOW + CONCLUDE_WINDOW + 1);
+    expect(propose().result).toBeOk(Cl.stringAscii(WEEK)); // re-propose, same date
+
+    closeVoting();
+    expect(veto(voter1).result).toBeOk(Cl.bool(true)); // round 2 veto, not barred
   });
 });
 
@@ -704,12 +826,12 @@ describe("parameters and phase are readable on chain", () => {
     expect(phase()).toContain("veto");
     simnet.mineEmptyBlocks(VETO_WINDOW);
     expect(phase()).toContain("concludable");
-    // "concludable" must not be open-ended: past the window, concluding FAILS
-    // the week, so the phase has to say so rather than reassure.
+    // "concludable" must not be open-ended: past the window the week EXPIRES,
+    // so the phase has to say so rather than reassure.
     simnet.mineEmptyBlocks(CONCLUDE_WINDOW);
-    expect(phase()).toContain("lapsed");
-    expect(settle().result).toBeOk(Cl.uint(2)); // FAILED
-    expect(phase()).toContain("failed"); // terminal, not "concluded"
+    expect(phase()).toContain("expired"); // reported before any conclude call
+    expect(settle().result).toBeOk(Cl.uint(3)); // EXPIRED
+    expect(phase()).toContain("expired"); // terminal, and still "expired"
   });
 });
 
