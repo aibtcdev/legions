@@ -35,7 +35,7 @@ import { generateWallet } from '@stacks/wallet-sdk';
 const API = process.env.STACKS_API || 'https://api.testnet.hiro.so';
 const network = new StacksTestnet({ url: API });
 
-const LEGION = 'ST2BEBZJ8Y2H6F5DK9KC450238Y3HGJCS9B7P2JD3'; // v2
+const LEGION = 'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9'; // v3, block 4049423
 const GOV = 'news-gov';
 const TREASURY = 'news-treasury';
 
@@ -121,7 +121,7 @@ async function status() {
   const b = brief.value?.value;
   if (!b) { console.log(`week ${WEEK}    not proposed`); return; }
   const g = (k) => b[k]?.value?.value ?? b[k]?.value;
-  const STATUS = ['OPEN', 'PASSED', 'FAILED'];
+  const STATUS = ['OPEN', 'PASSED', 'FAILED', 'EXPIRED'];
   const voteEnd = Number(g('voteEnd'));
   console.log(`week ${WEEK}`);
   console.log(`  status      ${STATUS[Number(g('status'))]}${g('reason') ? ` (${g('reason')})` : ''}`);
