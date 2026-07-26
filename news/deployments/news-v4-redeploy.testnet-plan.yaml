@@ -1,0 +1,64 @@
+---
+id: 0
+name: "Testnet deployment - aibtc.news Legion v4 REDEPLOY with voting-delay (news-treasury-v4 + news-gov-v4-testnet)"
+network: testnet
+stacks-node: "https://api.testnet.hiro.so"
+bitcoin-node: "http://blockstack:blockstacksystem@bitcoind.testnet.stacks.co:18332"
+plan:
+  batches:
+    # ---------------------------------------------------------------------
+    # Batch 0: publish. Deployer below is legion-agent-06 (STGX5YP5...), the
+    # same wallet the v3 plan used. If you deploy from a DIFFERENT wallet,
+    # replace the address in all THREE places here and put that wallet's
+    # mnemonic in settings/Testnet.toml.
+    #
+    # ORDER MATTERS. news-gov-v4-testnet contains
+    # `(contract-call? .news-treasury-v4 ...)`, which resolves against the SAME
+    # deployer principal, so the treasury must publish first and both must come
+    # from this one wallet.
+    #
+    # This deploys the TESTNET timing build (news-gov-v4-testnet.clar, stacks
+    # blocks, ~26 min lifecycle). The mainnet burn-block build (news-gov-v4.clar)
+    # is NOT deployed here.
+    #
+    # Clarity 3 / epoch 3.0 is required: the treasury uses `as-contract`, which
+    # Clarity 4 renamed. This is also why it cannot go through the aibtc MCP
+    # deploy_contract (which pins Clarity 4).
+    # ---------------------------------------------------------------------
+    - id: 0
+      transactions:
+        - contract-publish:
+            contract-name: news-treasury-v4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 400000
+            path: contracts/news-treasury-v4.clar
+            anchor-block-only: true
+            clarity-version: 3
+        - contract-publish:
+            contract-name: news-gov-v4-testnet
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            cost: 900000
+            path: contracts/news-gov-v4-testnet.clar
+            anchor-block-only: true
+            clarity-version: 3
+      epoch: "3.0"
+
+    # ---------------------------------------------------------------------
+    # Batch 1: one-time wiring. Authorizes news-gov-v4-testnet as the only
+    # principal that can move funds out of news-treasury-v4. set-gov is one-shot:
+    # a second call returns (err u403).
+    #
+    # No set-token step: the sBTC principal is a compiled-in literal in the
+    # treasury (the testnet Faktory faucet token STV9K21...).
+    # ---------------------------------------------------------------------
+    - id: 1
+      transactions:
+        - contract-call:
+            contract-id: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.news-treasury-v4
+            expected-sender: STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9
+            method: set-gov
+            parameters:
+              - "'STGX5YP51NKM69ZMP6DVB6GAJAANCG5WB3718KD9.news-gov-v4-testnet"
+            cost: 20000
+            anchor-block-only: true
+      epoch: "3.0"
