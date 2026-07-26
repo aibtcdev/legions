@@ -16,6 +16,23 @@ path = 'contracts/news-gov.clar'
 clarity_version = 3
 epoch = 3.0
 
+[contracts.news-treasury-v4]
+path = 'contracts/news-treasury-v4.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.news-gov-v4]
+path = 'contracts/news-gov-v4.clar'
+clarity_version = 3
+epoch = 3.0
+
+# Generated from news-gov-v4.clar by scripts/gen-testnet-gov.mjs. Counts stacks
+# blocks with a ~30 min lifecycle for fast testnet iteration. Do not edit by hand.
+[contracts.news-gov-v4-testnet]
+path = 'contracts/news-gov-v4-testnet.clar'
+clarity_version = 3
+epoch = 3.0
+
 [repl.analysis]
 passes = ['check_checker']
 [repl.analysis.check_checker]
