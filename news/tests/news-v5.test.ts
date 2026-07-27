@@ -29,6 +29,9 @@ const VETO_WINDOW = 6;
 const CONCLUDE_WINDOW = 12;
 const MIN_WEIGHT = 10_000;
 
+// Must match news-treasury-v5.clar MIN_SPONSOR (sats).
+const MIN_SPONSOR = 100_000;
+
 // Statuses.
 const PASSED = 1n;
 const FAILED = 2n;
@@ -102,6 +105,25 @@ function wire() {
   expect(
     simnet.callPublicFn(TREASURY, "set-gov", [Cl.principal(govPrincipal)], deployer).result,
   ).toBeOk(Cl.bool(true));
+}
+
+/**
+ * Weight-less sponsor deposit. Public, so `who` needs no weight and gets none.
+ * Identity is structured: name is required, link is optional, memo is free text.
+ */
+function sponsor(
+  amount: number,
+  who = outsider,
+  name = "AIBTC",
+  link = Cl.none(),
+  memo = "",
+) {
+  return simnet.callPublicFn(
+    TREASURY,
+    "sponsor-in",
+    [Cl.uint(amount), Cl.stringAscii(name), link, Cl.stringAscii(memo)],
+    who,
+  );
 }
 
 function propose(
@@ -648,7 +670,12 @@ describe("sponsor-in: weight-less deposit funds the pool without a vote (v5)", (
       simnet.callPublicFn(
         TREASURY,
         "sponsor-in",
-        [Cl.uint(20_000_000), Cl.stringAscii("acme corp")],
+        [
+          Cl.uint(20_000_000),
+          Cl.stringAscii("AIBTC"),
+          Cl.some(Cl.stringAscii("https://aibtc.com")),
+          Cl.stringAscii("glad to fund this"),
+        ],
         outsider,
       ).result,
     ).toBeOk(Cl.bool(true));
@@ -660,41 +687,86 @@ describe("sponsor-in: weight-less deposit funds the pool without a vote (v5)", (
   it("is public: a non-contributor with zero weight can sponsor", () => {
     wire();
     faucet(outsider);
-    expect(
-      simnet.callPublicFn(
-        TREASURY,
-        "sponsor-in",
-        [Cl.uint(1_000_000), Cl.stringAscii("x")],
-        outsider,
-      ).result,
-    ).toBeOk(Cl.bool(true));
+    expect(sponsor(1_000_000).result).toBeOk(Cl.bool(true));
     expect(poolOf()).toBe(1_000_000n);
     expect(weightOf(outsider)).toBe(0n);
   });
 
-  it("rejects a zero deposit", () => {
+  it("takes the identity as structured fields, with link optional", () => {
+    wire();
+    faucet(outsider);
+    // No site: `link` is none, and that is a first-class value, not an empty string.
+    const { result, events } = simnet.callPublicFn(
+      TREASURY,
+      "sponsor-in",
+      [
+        Cl.uint(MIN_SPONSOR),
+        Cl.stringAscii("AIBTC"),
+        Cl.none(),
+        Cl.stringAscii(""),
+      ],
+      outsider,
+    );
+    expect(result).toBeOk(Cl.bool(true));
+    // The event carries name/link/memo as separate fields: an indexer reads the
+    // display name directly and never parses a separator convention.
+    const printed = events
+      .filter((e) => e.event === "print_event")
+      .map((e) => Cl.prettyPrint(e.data.value as any))
+      .join("\n");
+    expect(printed).toContain('name: "AIBTC"');
+    expect(printed).toContain("link: none");
+    expect(printed).toContain("event: \"sponsor-in\"");
+  });
+
+  it("rejects a deposit under the minimum, and takes exactly the minimum", () => {
+    wire();
+    faucet(outsider);
+    expect(sponsor(MIN_SPONSOR - 1).result).toBeErr(Cl.uint(450));
+    expect(sponsor(0).result).toBeErr(Cl.uint(450)); // zero is just the far end of below-min
+    expect(poolOf()).toBe(0n); // nothing landed
+    expect(sponsor(MIN_SPONSOR).result).toBeOk(Cl.bool(true)); // boundary is inclusive
+    expect(poolOf()).toBe(BigInt(MIN_SPONSOR));
+  });
+
+  it("rejects an unnamed sponsor", () => {
     wire();
     faucet(outsider);
     expect(
       simnet.callPublicFn(
         TREASURY,
         "sponsor-in",
-        [Cl.uint(0), Cl.stringAscii("x")],
+        [Cl.uint(MIN_SPONSOR), Cl.stringAscii(""), Cl.none(), Cl.stringAscii("")],
         outsider,
       ).result,
-    ).toBeErr(Cl.uint(409));
+    ).toBeErr(Cl.uint(451));
+    expect(poolOf()).toBe(0n);
+  });
+
+  it("publishes the floor so a caller never hardcodes it", () => {
+    wire();
+    expect(
+      simnet.callReadOnlyFn(TREASURY, "get-min-sponsor", [], deployer).result,
+    ).toBeUint(MIN_SPONSOR);
+  });
+
+  it("lets the same sponsor deposit again: both land, nothing is deduped", () => {
+    // The treasury keeps NO per-sender sponsor state, so a repeat deposit (a
+    // renewal, a top-up, or a mistake) is simply a second deposit. There is no
+    // refund path, by design -- the money funds journalism either way.
+    wire();
+    faucet(outsider);
+    expect(sponsor(MIN_SPONSOR).result).toBeOk(Cl.bool(true));
+    expect(sponsor(MIN_SPONSOR).result).toBeOk(Cl.bool(true));
+    expect(poolOf()).toBe(BigInt(MIN_SPONSOR * 2));
+    expect(weightOf(outsider)).toBe(0n); // still no governance power, twice over
   });
 
   it("makes the next proposal's draw bigger (0.05% of the larger pool)", () => {
     fundedLegion(); // pool 30M
     faucet(outsider);
     // sponsor 70M -> pool 100M -> draw = 0.05% of 100M = 50,000 (vs 15,000 without)
-    simnet.callPublicFn(
-      TREASURY,
-      "sponsor-in",
-      [Cl.uint(70_000_000), Cl.stringAscii("acme")],
-      outsider,
-    );
+    sponsor(70_000_000);
     expect(poolOf()).toBe(100_000_000n);
     expect(propose().result).toBeOk(Cl.uint(1));
     const story = Cl.prettyPrint(

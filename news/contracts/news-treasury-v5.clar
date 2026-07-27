@@ -10,6 +10,8 @@
 ;; in v5) adds sBTC and mints NO weight: a sponsor funds the pool for an ad
 ;; without gaining governance power. That weight-less path deliberately un-welds
 ;; money from governance, but only for sponsor money; contribute-in is unchanged.
+;; A sponsor names itself on-chain (see `sponsor-in`) and buys nothing but the
+;; attribution; the pool spends its money exactly as it spends everyone else's.
 ;;
 ;; Weight comes from the same sats that get paid out, so every yes vote spends
 ;; the voter's own money in proportion to their say. Because nothing is
@@ -37,6 +39,12 @@
 
 (define-constant DEPLOYER tx-sender)
 
+;; Floor on a single `sponsor-in` deposit, in sats. A sponsorship buys attribution
+;; off-chain, so a dust deposit would claim the same billing as a real one. There
+;; is deliberately NO ceiling: a large deposit is a good customer, not an error,
+;; and the contract cannot tell a fat-finger from a whale.
+(define-constant MIN_SPONSOR u100000)
+
 ;; -------------------------------------------------------------------
 ;; Errors
 ;; -------------------------------------------------------------------
@@ -47,6 +55,8 @@
 (define-constant ERR_INVALID_PRINCIPAL (err u410)) ;; cannot wire gov to the treasury itself
 (define-constant ERR_INVALID_RECIPIENT (err u411)) ;; treasury cannot pay itself
 (define-constant ERR_ALREADY_PAID (err u416)) ;; this payout-ref has already been settled
+(define-constant ERR_BELOW_MIN (err u450)) ;; sponsor deposit under MIN_SPONSOR
+(define-constant ERR_EMPTY_NAME (err u451)) ;; a sponsor must say who it is
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -81,6 +91,11 @@
 
 (define-read-only (get-token)
   SBTC
+)
+
+;; The sponsorship floor, readable so a caller never has to hardcode it.
+(define-read-only (get-min-sponsor)
+  MIN_SPONSOR
 )
 
 (define-read-only (get-payout (payout-ref (buff 32)))
@@ -150,22 +165,44 @@
 ;; for sponsor money only. Opt-in: anyone who wants a say still uses contribute;
 ;; only money that should NOT carry a vote comes in here.
 ;;
-;; The `memo` is opaque on-chain -- a tag the news site uses to attribute the
-;; sponsorship ("acme", or a story reference). The contract never reads it; it is
-;; emitted in the event so the frontend can render "sponsored by xyz" and tie the
-;; deposit to a story off-chain. The txid is the sponsor's public proof of payment.
+;; The sponsor's identity is STRUCTURED, not packed into one blob. `name` is the
+;; sponsor as it should be attributed, `link` is an optional site, and `memo` is
+;; free-form text the sponsor puts on the record. Splitting them means no reader
+;; has to parse a separator convention back apart: the event prints three
+;; distinct fields and any indexer reads `name` directly. The contract never
+;; reads any of them.
+;;
+;; `name` is an UNVERIFIED claim -- anyone can pass any string, so a display
+;; MUST treat the sender principal as the authoritative identity and `name` as
+;; the label that principal asserted. The txid is the sponsor's proof of payment.
+;;
+;; Nothing about the sponsorship's DURATION or display lives here. The chain
+;; records who paid, how much, and what they called themselves; how long a badge
+;; shows and which sponsor wins a contested slot are off-chain rules anyone can
+;; recompute from these events.
+;;
+;; A deposit is FINAL. There is no refund path and cannot be one without handing
+;; someone a key to the money (see the outflow note in the header), so a repeat
+;; or oversized deposit simply funds more journalism. The floor is the only
+;; guard, and it is deliberately one-sided.
 (define-public (sponsor-in
     (amount uint)
+    (name (string-ascii 40))
+    (link (optional (string-ascii 96)))
     (memo (string-ascii 128))
   )
   (begin
-    (asserts! (> amount u0) ERR_ZERO_AMOUNT)
+    ;; MIN_SPONSOR is > u0, so this subsumes the zero check the other inflows do.
+    (asserts! (>= amount MIN_SPONSOR) ERR_BELOW_MIN)
+    (asserts! (> (len name) u0) ERR_EMPTY_NAME)
     (try! (contract-call? 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token transfer amount tx-sender (as-contract tx-sender) none))
     (var-set Balance (+ (var-get Balance) amount))
     (print {
       event: "sponsor-in",
       from: tx-sender,
       amount: amount,
+      name: name,
+      link: link,
       memo: memo,
       balance: (var-get Balance),
     })

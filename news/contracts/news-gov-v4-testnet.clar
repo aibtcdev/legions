@@ -581,6 +581,7 @@
 ;; and an optional description, and locks their entire voting weight for the life
 ;; of the piece. If it passes, the caller is paid. The caller may hold only one
 ;; live proposal at a time.
+;; #[allow(unchecked_data)]
 (define-public (propose-story
     (link (string-ascii 200))
     (title (string-ascii 128))
