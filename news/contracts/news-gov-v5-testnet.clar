@@ -148,6 +148,21 @@
 ;; Weight floor to propose or vote.
 (define-constant MIN_WEIGHT u10000)
 
+;; Sats floor to join at all, checked against the AMOUNT SENT, not the weight it
+;; mints. Weight is priced as a share of the contributed pool, so the sats needed
+;; to reach MIN_WEIGHT drift downward as the pool pays out: without this floor,
+;; the price of a full vote falls forever, and a mature legion could be joined
+;; for dust. This pins the cost of entry to a fixed number of sats regardless of
+;; pool state.
+;;
+;; Set EQUAL to MIN_WEIGHT deliberately. WeightedBalance <= TotalWeight always
+;; holds (they start equal; contribute raises both, and a payout shrinks only the
+;; former), so minted = amount * TotalWeight / WeightedBalance is never less than
+;; amount. A contribution at this floor therefore always mints at least
+;; MIN_WEIGHT: whoever can join can immediately propose, vote and veto. There is
+;; no dead tier of holders who paid in but cannot act.
+(define-constant MIN_CONTRIBUTION u10000)
+
 ;; Draw per approved piece, in basis points of the pool. 5 bp = 0.05%.
 ;; The whole draw goes to the proposer; no fee is skimmed. Because the draw is a
 ;; fraction of the CURRENT pool, distribution decays geometrically (it asymptotes,
@@ -183,7 +198,7 @@
 (define-constant ERR_VOTE_NOT_STARTED (err u436)) ;; vote during the pending period, before voting opens
 (define-constant ERR_VOTE_STILL_OPEN (err u408)) ;; conclude before vetoEnd
 (define-constant ERR_CONCLUDE_WINDOW_PASSED (err u435)) ;; conclude after the window; already expired
-(define-constant ERR_ZERO_AMOUNT (err u409)) ;; contribution must be > 0
+(define-constant ERR_BELOW_MIN_CONTRIBUTION (err u437)) ;; joined with less than MIN_CONTRIBUTION sats
 (define-constant ERR_PROPOSAL_CONCLUDED (err u410)) ;; already terminal
 (define-constant ERR_PAYOUT_FAILED (err u417)) ;; a treasury payout errored; whole tx reverts
 (define-constant ERR_EMPTY_POOL (err u418)) ;; nothing to draw against
@@ -325,6 +340,7 @@
     vetoQuorum: VETO_QUORUM,
     minParticipants: MIN_PARTICIPANTS,
     minWeight: MIN_WEIGHT,
+    minContribution: MIN_CONTRIBUTION,
     drawBps: DRAW_BPS,
     votingDelay: VOTING_DELAY,
     voteWindow: VOTE_WINDOW,
@@ -574,9 +590,13 @@
       ))
       (next (+ (get-weight tx-sender) minted))
     )
-    (asserts! (> amount u0) ERR_ZERO_AMOUNT)
+    ;; A fixed sats floor to join, independent of pool size. Subsumes the old
+    ;; zero-amount check, since MIN_CONTRIBUTION is > u0.
+    (asserts! (>= amount MIN_CONTRIBUTION) ERR_BELOW_MIN_CONTRIBUTION)
     ;; A contribution so small it rounds to zero weight would be a silent
-    ;; donation. Reject it rather than take the money for nothing.
+    ;; donation. Reject it rather than take the money for nothing. Unreachable
+    ;; while WeightedBalance <= TotalWeight holds (minted >= amount >= the floor);
+    ;; kept as a backstop in case that invariant is ever broken upstream.
     (asserts! (> minted u0) ERR_DUST_CONTRIBUTION)
     (try! (contract-call? .news-treasury-v5 contribute-in amount))
     (map-set Weights tx-sender next)

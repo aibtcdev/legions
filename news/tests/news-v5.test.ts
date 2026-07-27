@@ -32,6 +32,10 @@ const MIN_WEIGHT = 10_000;
 // Must match news-treasury-v5.clar MIN_SPONSOR (sats).
 const MIN_SPONSOR = 100_000;
 
+// Must match news-gov-v5.clar MIN_CONTRIBUTION (sats). A fixed floor to join,
+// independent of pool size, unlike the weight floor it is deliberately equal to.
+const MIN_CONTRIBUTION = 10_000;
+
 // Statuses.
 const PASSED = 1n;
 const FAILED = 2n;
@@ -259,8 +263,59 @@ describe("contribute: money in, weight out", () => {
   it("refuses a zero contribution", () => {
     faucet(outsider);
     expect(simnet.callPublicFn(GOV, "contribute", [Cl.uint(0)], outsider).result).toBeErr(
-      Cl.uint(409),
+      Cl.uint(437), // below the join floor, which subsumes the old zero check
     );
+  });
+
+  it("enforces a 10,000 sat floor to join, whatever the pool is worth", () => {
+    // The floor is on SATS SENT, not on the weight it mints. Weight is priced as
+    // a share of the contributed pool, so the sats needed to reach MIN_WEIGHT
+    // fall as the pool pays out. Without a fixed floor, a mature legion could
+    // eventually be joined for dust.
+    // beforeEach already wired; just fund the legion.
+    contribute(proposer);
+    contribute(voter1);
+    contribute(voter2);
+    expect(
+      simnet.callPublicFn(GOV, "contribute", [Cl.uint(9_999)], outsider).result,
+    ).toBeErr(Cl.uint(437));
+    faucet(outsider);
+    expect(
+      simnet.callPublicFn(GOV, "contribute", [Cl.uint(MIN_CONTRIBUTION)], outsider).result,
+    ).toBeOk(Cl.uint(MIN_CONTRIBUTION)); // boundary is inclusive
+
+    // A contribution AT the floor always mints at least MIN_WEIGHT, so whoever
+    // can join can act immediately. WeightedBalance <= TotalWeight guarantees it.
+    expect(weightOf(outsider)).toBeGreaterThanOrEqual(BigInt(MIN_WEIGHT));
+  });
+
+  it("holds the floor after the pool has paid out and weight got cheaper", () => {
+    // Drain some pool so WeightedBalance < TotalWeight and the sats price of
+    // MIN_WEIGHT has genuinely dropped. The floor must not drop with it.
+    contribute(proposer);
+    contribute(voter1);
+    contribute(voter2);
+    faucet(outsider);
+    sponsor(70_000_000); // pool 100M, weighted 30M -> draw is 5bp of the WHOLE pool
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    vote(voter1, 1, true);
+    vote(voter2, 1, true);
+    mineToConcludable();
+    expect(conclude(1).result).toBeOk(Cl.uint(1));
+
+    // MIN_WEIGHT now costs FEWER than 10,000 sats...
+    expect(quoteWeight(MIN_CONTRIBUTION)).toBeGreaterThan(BigInt(MIN_WEIGHT));
+    // ...but joining still costs 10,000 sats.
+    expect(
+      simnet.callPublicFn(GOV, "contribute", [Cl.uint(9_999)], voter3).result,
+    ).toBeErr(Cl.uint(437));
+  });
+
+  it("publishes the join floor in get-params", () => {
+    expect(
+      Cl.prettyPrint(simnet.callReadOnlyFn(GOV, "get-params", [], deployer).result as any),
+    ).toContain(`minContribution: u${MIN_CONTRIBUTION}`);
   });
 
   it("quotes the weight a contribution would buy", () => {
