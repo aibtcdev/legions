@@ -34,8 +34,14 @@ Read from source, not from memory.
 | `CONCLUDE_WINDOW` | 12 blocks | window to settle before expiry |
 | `PROPOSE_INTERVAL` | 1 block | global rate limit on proposals |
 
-Production counts Bitcoin blocks (~10 min). The generated testnet build counts Stacks
-blocks, so every window is far shorter there.
+**Every figure in this document is the MAINNET build.** The analysis targets
+`news-gov-v5.clar`, which returns `get-timing-mode` = `"PROD-BURN"` and counts Bitcoin
+blocks at ~10 min each; the tests advance time with `mineEmptyBurnBlocks`. So "38 blocks"
+means 6.3 hours and "144/day" means one per Bitcoin block, not per Stacks block.
+
+The generated testnet build (`news-gov-v5-testnet.clar`, `"TEST-STACKS-BLOCKS"`) counts
+Stacks blocks with a shorter lifecycle. It is faster in wall-clock terms but the structure
+below is identical, because none of the thresholds are time-based.
 
 ---
 
@@ -355,6 +361,27 @@ Pay `DRAW_BPS × min(Balance, k × WeightedBalance)`. At r=48 with k=3 the draw 
 so break-even stretches 1.5 → 4.1 days. Weaker than it first appears, because the
 attacker's own stake counts toward `WeightedBalance` and so raises their own cap. Sponsor
 money above the ratio becomes temporarily undrawable.
+
+### Lengthening the lifecycle windows
+
+**Does not work.** This is the obvious lever and it is the wrong one.
+
+Extraction throughput is `min(1 per block, N principals / cycle length)`. The propose gate
+is `LastProposeAt + PROPOSE_INTERVAL` (`news-gov-v5.clar:430`) and reads none of
+`VOTE_WINDOW`, `VETO_WINDOW`, or `CONCLUDE_WINDOW`. So doubling every window does not slow
+extraction at all: it only doubles the number of proposer principals needed to saturate the
+global cap, and principals are free. An attacker adds addresses; the ceiling stays 144/day.
+
+Longer windows do buy something real, just not this: more wall-clock time for honest
+holders to notice and cast a veto, which section 6 shows is worth 19x. That is a defence
+against inattention, not against extraction rate.
+
+### Raise `PROPOSE_INTERVAL`
+
+The only constant that moves the extraction ceiling. At `u1` the cap is 144 stories/day. At
+`u6` it is 24/day, and break-even at r=48 stretches from 1.5 days to 9.1. It throttles
+honest publishing by exactly the same factor, so it trades feed liveness for drain
+resistance directly.
 
 ### Raise `MIN_CONTRIBUTION`
 
