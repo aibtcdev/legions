@@ -66,6 +66,28 @@
 ;; The pool. Everything in here is spendable on journalism and nothing else.
 (define-data-var Balance uint u0)
 
+;; The CONTRIBUTED share of the pool: sats that arrived through `contribute-in`
+;; and therefore minted voting weight. Sponsor sats are in Balance but NOT here.
+;;
+;; This exists because gov prices new weight as a share of the pool, and a
+;; weight-less inflow would otherwise move that price. Two failures follow from
+;; pricing against raw Balance: a sponsorship landing before the first
+;; contributor leaves weight at zero over a large pool (the first contributor
+;; then mints a flat `amount` and owns everything, at a price no later joiner can
+;; match), and every later sponsorship raises the sats cost of the same weight,
+;; so successful sponsorship progressively closes the legion. Both invert the
+;; point of the weight-less path.
+;;
+;; Pricing against WeightedBalance instead keeps the exchange rate a function of
+;; contributed money only. Sponsor sats still enlarge every payout, because the
+;; draw is a fraction of the WHOLE pool; they simply buy no governance and move
+;; no one else's price. The consequence, deliberate: as sponsorship grows,
+;; governance is cheap relative to the money it governs, since only contributors
+;; hold weight and their claim is priced off their own sats.
+;;
+;; Payouts shrink it pro-rata, so it stays a true fraction of Balance.
+(define-data-var WeightedBalance uint u0)
+
 ;; Settled payout references, keyed by sha256 of {id: proposalId, r: recipient}.
 ;; Anyone can recompute a ref and check on-chain whether that proposal was paid,
 ;; and how much. The uniqueness of proposalId makes each ref settleable once.
@@ -83,6 +105,12 @@
 ;; -------------------------------------------------------------------
 (define-read-only (get-balance)
   (var-get Balance)
+)
+
+;; The contributed share of the pool. Gov prices new weight against THIS, never
+;; against get-balance, so sponsor money never moves the exchange rate.
+(define-read-only (get-weighted-balance)
+  (var-get WeightedBalance)
 )
 
 (define-read-only (get-gov)
@@ -145,6 +173,8 @@
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
     (try! (contract-call? 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token transfer amount tx-sender (as-contract tx-sender) none))
     (var-set Balance (+ (var-get Balance) amount))
+    ;; Weight-minting money, so it counts toward the price of future weight.
+    (var-set WeightedBalance (+ (var-get WeightedBalance) amount))
     (print {
       event: "contribute-in",
       from: tx-sender,
@@ -192,6 +222,12 @@
     (memo (string-ascii 128))
   )
   (begin
+    ;; Refuse money the pool could never spend. Every outflow is gov-gated, so
+    ;; before wiring there is no path out at all: if the deployer key is lost
+    ;; between deploy and set-gov, an unguarded sponsor-in would keep accepting
+    ;; deposits into a treasury that can never pay anything. This is the only
+    ;; entry point not already gov-gated, so it is the only one that needs it.
+    (asserts! (is-some (var-get Gov)) ERR_UNAUTHORIZED)
     ;; MIN_SPONSOR is > u0, so this subsumes the zero check the other inflows do.
     (asserts! (>= amount MIN_SPONSOR) ERR_BELOW_MIN)
     (asserts! (> (len name) u0) ERR_EMPTY_NAME)
@@ -221,7 +257,10 @@
     (amount uint)
     (payout-ref (buff 32))
   )
-  (let ((bal (var-get Balance)))
+  (let (
+      (bal (var-get Balance))
+      (weighted (var-get WeightedBalance))
+    )
     (asserts! (is-gov contract-caller) ERR_UNAUTHORIZED)
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
     (asserts! (not (is-eq recipient (as-contract tx-sender))) ERR_INVALID_RECIPIENT)
@@ -235,6 +274,12 @@
       height: stacks-block-height,
     })
     (var-set Balance (- bal amount))
+    ;; Shrink the contributed share by the SAME FRACTION the pool shrank, so it
+    ;; stays a true proportion of Balance and weight keeps diluting as the pool
+    ;; is spent. `bal` is > u0 here: amount is > u0 and <= bal, so no divide by
+    ;; zero. Integer division rounds this down, leaving WeightedBalance a hair
+    ;; high, which prices new weight very slightly in existing holders' favour.
+    (var-set WeightedBalance (- weighted (/ (* weighted amount) bal)))
 
     ;; --- interaction ---
     (try! (as-contract (contract-call? 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token transfer amount tx-sender recipient none)))

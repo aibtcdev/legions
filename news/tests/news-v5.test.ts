@@ -826,3 +826,135 @@ describe("read surface: params, phase, propose-status", () => {
     expect(after).toContain("noLiveProposal: false");
   });
 });
+
+// ---- audit regressions: sponsor-in COMPOSED with contribute ---------
+//
+// The original v5 suite tested sponsor-in only in isolation (pool grew, no
+// weight minted, floor enforced). Every defect an audit found lived in the
+// composition with contribute, which nothing exercised. These are those cases.
+
+function quoteWeight(amount: number): bigint {
+  return (simnet.callReadOnlyFn(GOV, "quote-weight", [Cl.uint(amount)], deployer)
+    .result as any).value as bigint;
+}
+
+function weightedBalance(): bigint {
+  return (simnet.callReadOnlyFn(TREASURY, "get-weighted-balance", [], deployer)
+    .result as any).value as bigint;
+}
+
+describe("sponsor money never moves the governance exchange rate", () => {
+  it("C1: a sponsorship before the FIRST contributor does not capture the legion", () => {
+    // Regression. When weight was priced against the raw pool, a sponsorship
+    // landing while TotalWeight was zero made the first contributor mint a flat
+    // `amount` and own 100% of a pool they barely funded -- and no later joiner
+    // could clear MIN_WEIGHT without paying pool-scale sats, so nothing could
+    // ever reach quorum again.
+    wire();
+    faucet(outsider);
+    expect(sponsor(100_000_000).result).toBeOk(Cl.bool(true));
+    expect(poolOf()).toBe(100_000_000n);
+    expect(totalWeight()).toBe(0n);
+    expect(weightedBalance()).toBe(0n); // sponsor sats are NOT weighted
+
+    // Two contributors of equal size must get equal weight, before and after.
+    contribute(proposer);
+    contribute(voter1);
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(weightOf(voter1)).toBe(BigInt(CONTRIB)); // identical rate, not a crumb
+    expect(totalWeight()).toBe(BigInt(2 * CONTRIB));
+    expect(weightedBalance()).toBe(BigInt(2 * CONTRIB));
+
+    // A newcomer still clears the floor for the floor's worth of sats.
+    expect(quoteWeight(MIN_WEIGHT)).toBe(BigInt(MIN_WEIGHT));
+
+    // And a piece can actually conclude: eligible weight is non-zero.
+    contribute(voter2);
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    vote(voter1, 1, true);
+    vote(voter2, 1, true);
+    mineToConcludable();
+    expect(conclude(1).result).toBeOk(Cl.uint(1)); // PASSED
+    expect(storyStatus(1)).toBe(PASSED);
+  });
+
+  it("H2: a sponsorship does not raise the sats price of joining", () => {
+    // Regression. Priced against the raw pool, a 270M sponsorship on a 30M pool
+    // cut quote-weight(10_000) from 10,000 to 1,000: ten times the sats for the
+    // same say, so the more sponsorship succeeded the more closed the legion got.
+    fundedLegion(); // pool 30M, weight 30M
+    const before = quoteWeight(MIN_WEIGHT);
+    faucet(outsider);
+    sponsor(270_000_000);
+    expect(poolOf()).toBe(300_000_000n); // pool really did grow 10x
+    expect(quoteWeight(MIN_WEIGHT)).toBe(before); // price did not move at all
+    expect(totalWeight()).toBe(BigInt(POOL)); // and no weight was minted
+  });
+
+  it("H1: a sponsorship cannot front-run an in-flight contribution", () => {
+    // Regression. The quote a contributor reads must still hold if a sponsor
+    // lands first; there is no slippage argument on contribute to protect them.
+    wire();
+    contribute(proposer);
+    const quoted = quoteWeight(CONTRIB);
+    faucet(outsider);
+    sponsor(180_000_000); // front-run
+    contribute(voter1, CONTRIB);
+    expect(weightOf(voter1)).toBe(quoted); // got exactly what was quoted
+  });
+
+  it("keeps the contributed share a true fraction of the pool across payouts", () => {
+    // WeightedBalance must shrink by the same fraction as Balance, or weight
+    // stops diluting as the pool is spent.
+    fundedLegion();
+    expect(weightedBalance()).toBe(BigInt(POOL));
+    faucet(outsider);
+    sponsor(70_000_000); // pool 100M, weighted still 30M
+
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    vote(voter1, 1, true);
+    vote(voter2, 1, true);
+    mineToConcludable();
+    expect(conclude(1).result).toBeOk(Cl.uint(1)); // PASSED
+
+    // draw = 0.05% of the WHOLE 100M pool = 50,000: sponsor sats do enlarge the
+    // payout. The contributed share drops by that same 0.05%, not by 50,000.
+    expect(poolOf()).toBe(100_000_000n - 50_000n);
+    expect(weightedBalance()).toBe(BigInt(POOL) - (BigInt(POOL) * 50_000n) / 100_000_000n);
+  });
+
+  it("M2: refuses sponsor money into a treasury that has no gov wired", () => {
+    // Every outflow is gov-gated, so before wiring there is no path out at all.
+    faucet(outsider);
+    expect(sponsor(MIN_SPONSOR).result).toBeErr(Cl.uint(401));
+    expect(poolOf()).toBe(0n);
+    wire();
+    expect(sponsor(MIN_SPONSOR).result).toBeOk(Cl.bool(true));
+  });
+});
+
+describe("mainnet deploy safety", () => {
+  it("M3: every sBTC principal in the treasury agrees with get-token", async () => {
+    // The SBTC constant is read by get-token alone; the transfers use inline
+    // literals, because contract-call? needs a literal. So a partial mainnet
+    // swap could ship a contract that advertises one token, takes deposits in a
+    // second, and pays out in a third. Pin them together.
+    const { readFileSync } = await import("node:fs");
+    // Strip comments first: the header's mainnet-swap deploy note names the
+    // mainnet principal on purpose, and that is documentation, not a call site.
+    const src = readFileSync("contracts/news-treasury-v5.clar", "utf8")
+      .split("\n")
+      .map((l) => l.replace(/;;.*$/, ""))
+      .join("\n");
+    const principals = [...src.matchAll(/'([A-Z0-9]+\.sbtc-token)/g)].map((m) => m[1]);
+    expect(principals.length).toBeGreaterThanOrEqual(4); // constant + 3 transfers
+    expect(new Set(principals).size).toBe(1); // all four identical
+    expect(
+      Cl.prettyPrint(
+        simnet.callReadOnlyFn(TREASURY, "get-token", [], deployer).result as any,
+      ),
+    ).toBe(`'${principals[0]}`);
+  });
+});

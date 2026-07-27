@@ -480,7 +480,7 @@
 ;; Weight a contribution of `amount` would mint right now.
 (define-read-only (quote-weight (amount uint))
   (let (
-      (bal (contract-call? .news-treasury-v5 get-balance))
+      (bal (contract-call? .news-treasury-v5 get-weighted-balance))
       (total (var-get TotalWeight))
     )
     (if (or (is-eq total u0) (is-eq bal u0))
@@ -538,13 +538,21 @@
 ;; the only way in and the only way to get weight. The money is not refundable.
 ;;
 ;; SHARE-OF-BALANCE MINTING:
-;;   minted = amount * TotalWeight / BalanceBefore      (first contributor: amount)
+;;   minted = amount * TotalWeight / WeightedBalanceBefore   (first: amount)
 ;; A contribution is measured against the money actually there, not against
 ;; everything ever contributed, so voting rights dilute naturally as the pool is
 ;; spent and refilled.
+;;
+;; The denominator is the treasury's WEIGHTED balance (contributed sats only),
+;; not its full Balance. Sponsor money is weight-less, so letting it into the
+;; denominator would make every sponsorship raise the price of joining, and a
+;; sponsorship landing before the first contributor would leave weight at zero
+;; over a funded pool -- whoever contributed first would then take everything at
+;; a price nobody could match afterwards. See the WeightedBalance note in
+;; news-treasury-v5.
 (define-public (contribute (amount uint))
   (let (
-      (balBefore (contract-call? .news-treasury-v5 get-balance))
+      (balBefore (contract-call? .news-treasury-v5 get-weighted-balance))
       (total (var-get TotalWeight))
       (minted (if (or (is-eq total u0) (is-eq balBefore u0))
         amount
