@@ -928,7 +928,7 @@ describe("sponsor money never moves the governance exchange rate", () => {
   it("M2: refuses sponsor money into a treasury that has no gov wired", () => {
     // Every outflow is gov-gated, so before wiring there is no path out at all.
     faucet(outsider);
-    expect(sponsor(MIN_SPONSOR).result).toBeErr(Cl.uint(401));
+    expect(sponsor(MIN_SPONSOR).result).toBeErr(Cl.uint(452)); // NOT_WIRED, not UNAUTHORIZED
     expect(poolOf()).toBe(0n);
     wire();
     expect(sponsor(MIN_SPONSOR).result).toBeOk(Cl.bool(true));
@@ -951,6 +951,11 @@ describe("mainnet deploy safety", () => {
     const principals = [...src.matchAll(/'([A-Z0-9]+\.sbtc-token)/g)].map((m) => m[1]);
     expect(principals.length).toBeGreaterThanOrEqual(4); // constant + 3 transfers
     expect(new Set(principals).size).toBe(1); // all four identical
+    // Pinning them to each other is not enough: a mainnet swap that changed all
+    // four consistently to a TYPO'd principal would still pass. Pin the value.
+    expect(principals[0]).toBe("STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token");
+    // A mainnet build must flip that expectation, and every call site, to
+    // SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token.
     expect(
       Cl.prettyPrint(
         simnet.callReadOnlyFn(TREASURY, "get-token", [], deployer).result as any,

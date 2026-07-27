@@ -57,6 +57,7 @@
 (define-constant ERR_ALREADY_PAID (err u416)) ;; this payout-ref has already been settled
 (define-constant ERR_BELOW_MIN (err u450)) ;; sponsor deposit under MIN_SPONSOR
 (define-constant ERR_EMPTY_NAME (err u451)) ;; a sponsor must say who it is
+(define-constant ERR_NOT_WIRED (err u452)) ;; gov not set yet: not "forbidden", "not ready"
 
 ;; -------------------------------------------------------------------
 ;; Data
@@ -86,6 +87,14 @@
 ;; hold weight and their claim is priced off their own sats.
 ;;
 ;; Payouts shrink it pro-rata, so it stays a true fraction of Balance.
+;;
+;; LOAD-BEARING: this must never reach u0 while TotalWeight is > u0, or gov's
+;; bootstrap branch reopens and the next contributor mints a flat `amount`
+;; against a funded pool -- the capture this whole mechanism exists to prevent.
+;; Floor division protects it today: (/ (* weighted amount) bal) equals weighted
+;; only when amount >= bal, i.e. a payout draining the ENTIRE pool, which
+;; DRAW_BPS u5 cannot produce. Anything that lets a single outflow take the
+;; whole pool (an admin drain, a much larger DRAW_BPS) breaks that guarantee.
 (define-data-var WeightedBalance uint u0)
 
 ;; Settled payout references, keyed by sha256 of {id: proposalId, r: recipient}.
@@ -227,7 +236,9 @@
     ;; between deploy and set-gov, an unguarded sponsor-in would keep accepting
     ;; deposits into a treasury that can never pay anything. This is the only
     ;; entry point not already gov-gated, so it is the only one that needs it.
-    (asserts! (is-some (var-get Gov)) ERR_UNAUTHORIZED)
+    ;; Distinct from ERR_UNAUTHORIZED on purpose: a sponsor hitting an unwired
+    ;; treasury is early, not forbidden, and a sponsor UI should say so.
+    (asserts! (is-some (var-get Gov)) ERR_NOT_WIRED)
     ;; MIN_SPONSOR is > u0, so this subsumes the zero check the other inflows do.
     (asserts! (>= amount MIN_SPONSOR) ERR_BELOW_MIN)
     (asserts! (> (len name) u0) ERR_EMPTY_NAME)
