@@ -340,20 +340,35 @@ Slows extraction linearly. At r=48:
 Does not change attack cost, only the payback period. Costs honest agents the same
 earnings it denies the attacker.
 
-### Lower `VETO_QUORUM`
+### `VETO_QUORUM`: one dial, two opposite attacks
 
-The strongest lever, and counter-intuitive: a **lower** veto threshold makes the attack
-dearer, because honest holders need a smaller share to block.
+A **lower** veto threshold makes takeover dearer, because honest holders need a smaller
+share to block. It makes **griefing cheaper** by exactly the same factor, because a hostile
+minority also needs a smaller share to block.
 
-| VETO_QUORUM | attacker needs | cost as % of pool (r=48) | break-even |
+Both columns verified at the boundary, honest stake `A` = 1,000,000:
+
+| VETO_QUORUM | takeover cost | grief cost | grief is cheaper by |
 |---|---|---|---|
-| 15% (current) | 5.68 × A | 10.38% | 1.5 days |
-| 10% | 9.01 × A | 15.53% | 2.3 days |
-| 7% | 13.30 × A | 21.34% | 3.3 days |
-| 5% | 19.01 × A | 27.95% | 4.6 days |
+| 20% | 4,010,001 | 247,500 | 16x |
+| **15% (current)** | **5,676,667** | **174,706** | **32x** |
+| 10% | 9,010,001 | 110,000 | 82x |
 
-Going 15% → 5% raises attack cost **3.3x** and costs nothing in contract complexity. The
-tradeoff is real: a smaller minority can also block legitimate stories.
+Verified: at 10%, 9,010,000 vetoed / 9,010,001 paid, and 109,999 paid / 110,001 blocked.
+At 15%, 174,705 paid / 174,706 blocked.
+
+**Griefing is far cheaper than takeover at every setting, and lowering the quorum widens
+the gap.** It is also permanent: weight is never spent, so whoever holds the grief
+threshold can veto *every* story forever. At 15% that costs 17.5% of the honest stake to
+shut off all payouts indefinitely.
+
+For a journalism project this grief has a name: **censorship**. The realistic adversary is
+not someone chasing a return but someone who wants reporting suppressed and does not care
+that their sats are locked forever. `VETO_QUORUM` is precisely that dial.
+
+**Recommendation: do not lower it.** Takeover is slow, public, and must keep publishing for
+days to profit. Censorship is instant, silent, and 32x cheaper already. If this constant
+moves at all, the argument for raising it is stronger than for lowering it.
 
 ### Cap the draw by contributed base
 

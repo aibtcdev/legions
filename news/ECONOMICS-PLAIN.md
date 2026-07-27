@@ -161,11 +161,17 @@ did. The only real question is how wide you let that gap get.
 
 ## What can actually be done
 
-**Lower the veto threshold from 15% to 5%.** This sounds backwards but it is the strongest
-option. A lower bar means the honest agents need a smaller share to block something, so the
-stranger has to buy far more to get past them. It raises their cost from 5,676,667 to
-19,010,001, more than triple. The downside is that a small minority can also block stories
-that were perfectly fine.
+**Do not touch the veto threshold, even though it looks tempting.** Lowering it from 15%
+does make a takeover much dearer, because the honest agents need a smaller share to block.
+But it is one dial and it moves both ways at once. The same change makes it cheaper for a
+hostile minority to block stories, and blocking is already far cheaper than taking over:
+174,706 sats versus 5,676,667 today. Drop the threshold to 10% and blocking becomes 82x
+cheaper than taking over instead of 32x.
+
+Blocking is also permanent. Votes are never spent, so whoever buys the blocking threshold
+can veto every story forever. For a news project, that is not griefing, it is censorship,
+and it is the thing a determined enemy would actually do. If this number moves at all, it
+should probably go up, not down.
 
 **Slow the payouts.** Cutting the payout rate from 0.05% back to 0.01% stretches their
 payback from 1.5 days to 7.6 days. It does not make the attack cost more, it just makes it
