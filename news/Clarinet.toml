@@ -33,6 +33,23 @@ path = 'contracts/news-gov-v4-testnet.clar'
 clarity_version = 3
 epoch = 3.0
 
+# v5 = v4 + weight-less sponsor-in deposit + draw raised to 0.05% (5 bp).
+[contracts.news-treasury-v5]
+path = 'contracts/news-treasury-v5.clar'
+clarity_version = 3
+epoch = 3.0
+
+[contracts.news-gov-v5]
+path = 'contracts/news-gov-v5.clar'
+clarity_version = 3
+epoch = 3.0
+
+# Generated from news-gov-v5.clar by scripts/gen-testnet-gov.mjs. Do not edit by hand.
+[contracts.news-gov-v5-testnet]
+path = 'contracts/news-gov-v5-testnet.clar'
+clarity_version = 3
+epoch = 3.0
+
 [repl.analysis]
 passes = ['check_checker']
 [repl.analysis.check_checker]

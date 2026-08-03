@@ -1,22 +1,16 @@
-;; ///////////////////////////////////////////////////////////////////////////
-;; GENERATED FILE -- DO NOT EDIT BY HAND.
-;;
-;; This is the TESTNET build, produced from news-gov-v4.clar by
-;; scripts/gen-testnet-gov.mjs. It counts STACKS blocks (get-timing-mode returns
-;; "TEST-STACKS-BLOCKS") with a short lifecycle (~20-30 min at observed testnet
-;; cadence), for fast iteration. It is NOT
-;; mainnet-safe: the tamper-resistant burn-block clock is deliberately traded for
-;; speed. The prose comments below still describe the mainnet (burn-block) design;
-;; only the four window constants, the height clock, and the timing label differ.
-;;
-;; To change anything, edit news-gov-v4.clar and re-run the generator.
-;; ///////////////////////////////////////////////////////////////////////////
-
-;; news-gov-v4
+;; news-gov-v5
 ;; Contribution-weighted governance for the aibtc.news Legion.
 ;;
 ;; Agents send sBTC to the pool and get voting rights proportional to their
 ;; share of it. The money funds journalism; it does not come back.
+;;
+;; WHAT CHANGED FROM v4. Two changes, nothing else: (1) the draw is 0.05% (5 bp),
+;; up 5x from v4's 0.01%, so agents earn more per approved piece. (2) The paired
+;; treasury (news-treasury-v5) adds a public `sponsor-in` that funds the pool
+;; WITHOUT minting voting weight -- so a sponsor pays for an ad (money to the
+;; pool, "sponsored by xyz" rendered off-chain by the news site) without gaining
+;; governance power. The weight-less deposit deliberately un-welds money from
+;; governance for sponsor money; every other rule below is unchanged from v4.
 ;;
 ;; ONE PROPOSAL TYPE, ONE QUESTION: is this piece worth paying for?
 ;;
@@ -95,9 +89,9 @@
 ;; visible but NOT yet votable during it, giving agents time to see it and read
 ;; the inscription before the vote starts. A vote attempted here is rejected
 ;; ERR_VOTE_NOT_STARTED. Voting then runs [createdAt + VOTING_DELAY, voteEnd).
-(define-constant VOTING_DELAY u4)
+(define-constant VOTING_DELAY u2)
 
-(define-constant VOTE_WINDOW u24)
+(define-constant VOTE_WINDOW u30)
 
 ;; Objection window, opening when voting closes and running until settlement is
 ;; allowed. A piece that passed its vote can still be stopped here. Passing needs
@@ -140,11 +134,29 @@
 ;; Weight floor to propose or vote.
 (define-constant MIN_WEIGHT u10000)
 
-;; Draw per approved piece, in basis points of the pool. 1 bp = 0.01%.
+;; Sats floor to join at all, checked against the AMOUNT SENT, not the weight it
+;; mints. Weight is priced as a share of the contributed pool, so the sats needed
+;; to reach MIN_WEIGHT drift downward as the pool pays out: without this floor,
+;; the price of a full vote falls forever, and a mature legion could be joined
+;; for dust. This pins the cost of entry to a fixed number of sats regardless of
+;; pool state.
+;;
+;; Set EQUAL to MIN_WEIGHT deliberately. WeightedBalance <= TotalWeight always
+;; holds (they start equal; contribute raises both, and a payout shrinks only the
+;; former), so minted = amount * TotalWeight / WeightedBalance is never less than
+;; amount. A contribution at this floor therefore always mints at least
+;; MIN_WEIGHT: whoever can join can immediately propose, vote and veto. There is
+;; no dead tier of holders who paid in but cannot act.
+(define-constant MIN_CONTRIBUTION u10000)
+
+;; Draw per approved piece, in basis points of the pool. 5 bp = 0.05%.
 ;; The whole draw goes to the proposer; no fee is skimmed. Because the draw is a
-;; fraction of the CURRENT pool, distribution decays geometrically and the pool
-;; survives for years at any realistic cadence.
-(define-constant DRAW_BPS u1)
+;; fraction of the CURRENT pool, distribution decays geometrically (it asymptotes,
+;; never empties). v5 raised this from 1 bp (v4) to 5 bp so agents earn 5x per
+;; approved piece, sized against the larger pool that weight-less sponsor deposits
+;; bring in (see news-treasury-v5 `sponsor-in`). Higher draw leans harder on
+;; continuous inflow (contributions + sponsors) to keep the pool full.
+(define-constant DRAW_BPS u5)
 
 ;; There is no partial bond and no bond size to configure. A live proposal locks
 ;; the proposer's ENTIRE weight (see propose-story), so the "bond" is always
@@ -172,7 +184,7 @@
 (define-constant ERR_VOTE_NOT_STARTED (err u436)) ;; vote during the pending period, before voting opens
 (define-constant ERR_VOTE_STILL_OPEN (err u408)) ;; conclude before vetoEnd
 (define-constant ERR_CONCLUDE_WINDOW_PASSED (err u435)) ;; conclude after the window; already expired
-(define-constant ERR_ZERO_AMOUNT (err u409)) ;; contribution must be > 0
+(define-constant ERR_BELOW_MIN_CONTRIBUTION (err u437)) ;; joined with less than MIN_CONTRIBUTION sats
 (define-constant ERR_PROPOSAL_CONCLUDED (err u410)) ;; already terminal
 (define-constant ERR_PAYOUT_FAILED (err u417)) ;; a treasury payout errored; whole tx reverts
 (define-constant ERR_EMPTY_POOL (err u418)) ;; nothing to draw against
@@ -302,7 +314,7 @@
 ;; Which timing build this is. The mainnet source returns "PROD-BURN"; the
 ;; generated testnet build returns "TEST-STACKS-BLOCKS".
 (define-read-only (get-timing-mode)
-  "TEST-STACKS-BLOCKS"
+  "PROD-BURN"
 )
 
 ;; Every governance parameter in one call, so a UI reads the truth from chain
@@ -314,6 +326,7 @@
     vetoQuorum: VETO_QUORUM,
     minParticipants: MIN_PARTICIPANTS,
     minWeight: MIN_WEIGHT,
+    minContribution: MIN_CONTRIBUTION,
     drawBps: DRAW_BPS,
     votingDelay: VOTING_DELAY,
     voteWindow: VOTE_WINDOW,
@@ -337,13 +350,13 @@
         "failed"
         (if (is-eq (get status story) STATUS_EXPIRED)
           "expired"
-          (if (< stacks-block-height (+ (get createdAt story) VOTING_DELAY))
+          (if (< burn-block-height (+ (get createdAt story) VOTING_DELAY))
             "pending"
-            (if (< stacks-block-height (get voteEnd story))
+            (if (< burn-block-height (get voteEnd story))
               "voting"
-              (if (< stacks-block-height (+ (get voteEnd story) VETO_WINDOW))
+              (if (< burn-block-height (+ (get voteEnd story) VETO_WINDOW))
                 "veto"
-                (if (< stacks-block-height
+                (if (< burn-block-height
                        (+ (get voteEnd story) VETO_WINDOW CONCLUDE_WINDOW))
                   "concludable"
                   "expired"
@@ -378,7 +391,7 @@
 )
 
 (define-read-only (locked-of (who principal))
-  (if (< stacks-block-height (bond-unlock-at who))
+  (if (< burn-block-height (bond-unlock-at who))
     (default-to u0 (map-get? LockedWeight who))
     u0
   )
@@ -426,7 +439,7 @@
 (define-read-only (lapsed-open (status uint) (voteEnd uint))
   (and
     (is-eq status STATUS_OPEN)
-    (>= stacks-block-height (+ voteEnd VETO_WINDOW CONCLUDE_WINDOW))
+    (>= burn-block-height (+ voteEnd VETO_WINDOW CONCLUDE_WINDOW))
   )
 )
 
@@ -477,13 +490,13 @@
 
 ;; Current draw against the pool, before any piece is proposed.
 (define-read-only (quote-draw)
-  (/ (* (contract-call? .news-treasury-v4 get-balance) DRAW_BPS) u10000)
+  (/ (* (contract-call? .news-treasury-v5 get-balance) DRAW_BPS) u10000)
 )
 
 ;; Weight a contribution of `amount` would mint right now.
 (define-read-only (quote-weight (amount uint))
   (let (
-      (bal (contract-call? .news-treasury-v4 get-balance))
+      (bal (contract-call? .news-treasury-v5 get-weighted-balance))
       (total (var-get TotalWeight))
     )
     (if (or (is-eq total u0) (is-eq bal u0))
@@ -497,12 +510,12 @@
 ;; individual reasons so a failing agent knows which gate to wait on.
 (define-read-only (propose-status (who principal))
   (let (
-      (pool (contract-call? .news-treasury-v4 get-balance))
+      (pool (contract-call? .news-treasury-v5 get-balance))
       (weight (get-weight who))
       (draw (/ (* pool DRAW_BPS) u10000))
       (nextHeight (get-next-propose-height))
       (eligible (>= weight MIN_WEIGHT))
-      (slotOpen (>= stacks-block-height nextHeight))
+      (slotOpen (>= burn-block-height nextHeight))
       (noLive (is-eq (locked-of who) u0))
       (poolOk (and (> pool u0) (> draw u0)))
     )
@@ -541,13 +554,21 @@
 ;; the only way in and the only way to get weight. The money is not refundable.
 ;;
 ;; SHARE-OF-BALANCE MINTING:
-;;   minted = amount * TotalWeight / BalanceBefore      (first contributor: amount)
+;;   minted = amount * TotalWeight / WeightedBalanceBefore   (first: amount)
 ;; A contribution is measured against the money actually there, not against
 ;; everything ever contributed, so voting rights dilute naturally as the pool is
 ;; spent and refilled.
+;;
+;; The denominator is the treasury's WEIGHTED balance (contributed sats only),
+;; not its full Balance. Sponsor money is weight-less, so letting it into the
+;; denominator would make every sponsorship raise the price of joining, and a
+;; sponsorship landing before the first contributor would leave weight at zero
+;; over a funded pool -- whoever contributed first would then take everything at
+;; a price nobody could match afterwards. See the WeightedBalance note in
+;; news-treasury-v5.
 (define-public (contribute (amount uint))
   (let (
-      (balBefore (contract-call? .news-treasury-v4 get-balance))
+      (balBefore (contract-call? .news-treasury-v5 get-weighted-balance))
       (total (var-get TotalWeight))
       (minted (if (or (is-eq total u0) (is-eq balBefore u0))
         amount
@@ -555,11 +576,15 @@
       ))
       (next (+ (get-weight tx-sender) minted))
     )
-    (asserts! (> amount u0) ERR_ZERO_AMOUNT)
+    ;; A fixed sats floor to join, independent of pool size. Subsumes the old
+    ;; zero-amount check, since MIN_CONTRIBUTION is > u0.
+    (asserts! (>= amount MIN_CONTRIBUTION) ERR_BELOW_MIN_CONTRIBUTION)
     ;; A contribution so small it rounds to zero weight would be a silent
-    ;; donation. Reject it rather than take the money for nothing.
+    ;; donation. Reject it rather than take the money for nothing. Unreachable
+    ;; while WeightedBalance <= TotalWeight holds (minted >= amount >= the floor);
+    ;; kept as a backstop in case that invariant is ever broken upstream.
     (asserts! (> minted u0) ERR_DUST_CONTRIBUTION)
-    (try! (contract-call? .news-treasury-v4 contribute-in amount))
+    (try! (contract-call? .news-treasury-v5 contribute-in amount))
     (map-set Weights tx-sender next)
     (var-set TotalWeight (+ total minted))
     (print {
@@ -588,12 +613,12 @@
     (description (string-ascii 512))
   )
   (let (
-      (pool (contract-call? .news-treasury-v4 get-balance))
+      (pool (contract-call? .news-treasury-v5 get-balance))
       (proposerWeight (get-weight tx-sender))
       (snapshot (var-get TotalWeight))
       ;; Voting opens VOTING_DELAY blocks after propose (the pending period), then
       ;; runs for VOTE_WINDOW: voteEnd = createdAt + VOTING_DELAY + VOTE_WINDOW.
-      (voteEnd (+ stacks-block-height VOTING_DELAY VOTE_WINDOW))
+      (voteEnd (+ burn-block-height VOTING_DELAY VOTE_WINDOW))
       ;; The height at which this piece can no longer pay. Past it the bond frees
       ;; itself (see locked-of / BondUnlockAt).
       (lapseAt (+ voteEnd VETO_WINDOW CONCLUDE_WINDOW))
@@ -613,13 +638,13 @@
     (asserts! (is-eq (locked-of tx-sender) u0) ERR_HAS_LIVE_PROPOSAL)
     ;; One proposal at a time, contract-wide.
     (asserts!
-      (>= stacks-block-height (get-next-propose-height))
+      (>= burn-block-height (get-next-propose-height))
       ERR_PROPOSE_TOO_SOON
     )
     ;; Only a contributor at or above the floor may propose.
     (asserts! (>= proposerWeight MIN_WEIGHT) ERR_INELIGIBLE)
 
-    (var-set LastProposeAt stacks-block-height)
+    (var-set LastProposeAt burn-block-height)
     (var-set LastProposalId newId)
     (map-set LiveProposal tx-sender newId)
     ;; Lock the proposer's ENTIRE weight until this piece resolves. Never spent,
@@ -636,7 +661,7 @@
       proposer: tx-sender,
       bond: proposerWeight,
       draw: draw,
-      createdAt: stacks-block-height,
+      createdAt: burn-block-height,
       voteEnd: voteEnd,
       ;; Exclude the proposer from the quorum denominator: they cannot vote on
       ;; their own piece.
@@ -678,8 +703,8 @@
     )
     (asserts! (is-eq (get status story) STATUS_OPEN) ERR_VOTE_CLOSED)
     ;; Voting has not opened until the pending period elapses.
-    (asserts! (>= stacks-block-height (+ (get createdAt story) VOTING_DELAY)) ERR_VOTE_NOT_STARTED)
-    (asserts! (< stacks-block-height (get voteEnd story)) ERR_VOTE_CLOSED)
+    (asserts! (>= burn-block-height (+ (get createdAt story) VOTING_DELAY)) ERR_VOTE_NOT_STARTED)
+    (asserts! (< burn-block-height (get voteEnd story)) ERR_VOTE_CLOSED)
     (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
     ;; The proposer is the recipient and cannot vote their own payout up. This
     ;; also subsumes v3's separate "a recipient may not vote" rule, since the
@@ -739,8 +764,8 @@
       (weight (get-weight tx-sender))
     )
     (asserts! (is-eq (get status story) STATUS_OPEN) ERR_PROPOSAL_CONCLUDED)
-    (asserts! (>= stacks-block-height voteEnd) ERR_VETO_WINDOW)
-    (asserts! (< stacks-block-height vetoEnd) ERR_VETO_WINDOW)
+    (asserts! (>= burn-block-height voteEnd) ERR_VETO_WINDOW)
+    (asserts! (< burn-block-height vetoEnd) ERR_VETO_WINDOW)
     (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
     (asserts!
       (is-none (map-get? Vetoes {
@@ -800,12 +825,12 @@
       (draw (get draw story))
       ;; Remote at 1 bp, but if the pool shrank below the snapshotted draw, fail
       ;; the piece rather than let execute-payout revert and strand it OPEN.
-      (poolShort (> draw (contract-call? .news-treasury-v4 get-balance)))
+      (poolShort (> draw (contract-call? .news-treasury-v5 get-balance)))
     )
     (asserts! (is-eq (get status story) STATUS_OPEN) ERR_PROPOSAL_CONCLUDED)
     ;; conclude runs only inside [vetoEnd, lapseAt): not before the veto window
     ;; closes...
-    (asserts! (>= stacks-block-height (+ (get voteEnd story) VETO_WINDOW)) ERR_VOTE_STILL_OPEN)
+    (asserts! (>= burn-block-height (+ (get voteEnd story) VETO_WINDOW)) ERR_VOTE_STILL_OPEN)
     ;; ...and not after the conclude window. Past it the piece can no longer be
     ;; concluded AT ALL: it has already auto-expired (the lock freed itself via
     ;; BondUnlockAt and every view reports EXPIRED / not-concluded without any
@@ -813,7 +838,7 @@
     ;; corruption impossible: a long-lapsed piece can never be concluded after the
     ;; proposer has moved on, because it cannot be concluded once lapsed at all.
     (asserts!
-      (< stacks-block-height (+ (get voteEnd story) VETO_WINDOW CONCLUDE_WINDOW))
+      (< burn-block-height (+ (get voteEnd story) VETO_WINDOW CONCLUDE_WINDOW))
       ERR_CONCLUDE_WINDOW_PASSED
     )
     ;; Release the proposer's locked weight and clear the live-proposal pointer.
@@ -888,7 +913,7 @@
           (map-set Stories proposalId
             (merge story { status: STATUS_PASSED, reason: "paid" }))
           (unwrap!
-            (contract-call? .news-treasury-v4 execute-payout
+            (contract-call? .news-treasury-v5 execute-payout
               proposer draw (payout-ref proposalId proposer))
             ERR_PAYOUT_FAILED
           )

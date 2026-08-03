@@ -11,7 +11,7 @@
 //   3. the get-timing-mode label, so a deployed instance is unmistakable.
 //
 // Everything else -- every rule, guard, and payout path -- is copied verbatim.
-// Edit news-gov-v4.clar, then re-run:  node scripts/gen-testnet-gov.mjs
+// Edit news-gov-v5.clar, then re-run:  node scripts/gen-testnet-gov.mjs
 //
 // The testnet gov reuses the mainnet treasury (news-treasury-v4): the pool has
 // no timing, so there is nothing to shrink and no second treasury to generate.
@@ -21,8 +21,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SRC = join(here, "..", "contracts", "news-gov-v4.clar");
-const OUT = join(here, "..", "contracts", "news-gov-v4-testnet.clar");
+const SRC = join(here, "..", "contracts", "news-gov-v5.clar");
+const OUT = join(here, "..", "contracts", "news-gov-v5-testnet.clar");
 
 // Deliberately shorter than v3's 36/12/48, which TESTNET.md measured at a bit
 // over 30 min. At the ~35-40s per stacks block those v3 runs implied, this is
@@ -41,7 +41,7 @@ const TESTNET = {
 const BANNER = `;; ///////////////////////////////////////////////////////////////////////////
 ;; GENERATED FILE -- DO NOT EDIT BY HAND.
 ;;
-;; This is the TESTNET build, produced from news-gov-v4.clar by
+;; This is the TESTNET build, produced from news-gov-v5.clar by
 ;; scripts/gen-testnet-gov.mjs. It counts STACKS blocks (get-timing-mode returns
 ;; "TEST-STACKS-BLOCKS") with a short lifecycle (~20-30 min at observed testnet
 ;; cadence), for fast iteration. It is NOT
@@ -49,7 +49,7 @@ const BANNER = `;; /////////////////////////////////////////////////////////////
 ;; speed. The prose comments below still describe the mainnet (burn-block) design;
 ;; only the four window constants, the height clock, and the timing label differ.
 ;;
-;; To change anything, edit news-gov-v4.clar and re-run the generator.
+;; To change anything, edit news-gov-v5.clar and re-run the generator.
 ;; ///////////////////////////////////////////////////////////////////////////
 
 `;

@@ -89,4 +89,19 @@ plan:
             emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
             path: contracts/news-gov-v4-testnet.clar
             clarity-version: 3
+        - emulated-contract-publish:
+            contract-name: news-treasury-v5
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: contracts/news-treasury-v5.clar
+            clarity-version: 3
+        - emulated-contract-publish:
+            contract-name: news-gov-v5
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: contracts/news-gov-v5.clar
+            clarity-version: 3
+        - emulated-contract-publish:
+            contract-name: news-gov-v5-testnet
+            emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+            path: contracts/news-gov-v5-testnet.clar
+            clarity-version: 3
       epoch: "3.0"

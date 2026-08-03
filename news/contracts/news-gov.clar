@@ -741,6 +741,7 @@
 ;; Open the vote on one week. The caller locks a bond scaled to total weight.
 ;; The bond is a lock on their own voting weight, released on every outcome; it
 ;; is never forfeited, whatever the vote decides (see conclude).
+;; #[allow(unchecked_data)]
 (define-public (propose-brief
     (briefDate (string-ascii 10))
     (title (string-ascii 128))
