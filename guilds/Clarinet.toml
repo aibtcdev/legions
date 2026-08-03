@@ -26,6 +26,11 @@ path = 'contracts/legion-providers.clar'
 clarity_version = 3
 epoch = 3.0
 
+[contracts.legion-engage]
+path = 'contracts/legion-engage.clar'
+clarity_version = 3
+epoch = 3.0
+
 [repl.analysis]
 passes = ['check_checker']
 
