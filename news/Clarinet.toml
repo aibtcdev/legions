@@ -50,6 +50,27 @@ path = 'contracts/news-gov-v5-testnet.clar'
 clarity_version = 3
 epoch = 3.0
 
+# v6 = v5 + vote weight snapshotted as of propose (at-block), veto removed,
+# VOTING_QUORUM 15 -> 10, MIN_PARTICIPANTS 2 -> 1, and a required on-chain
+# rationale on every vote. The treasury is byte-for-byte v5's behaviour; it is
+# redeployed only because set-gov is one-time.
+[contracts.news-treasury-v6]
+path = 'contracts/news-treasury-v6.clar'
+clarity_version = 5
+epoch = 3.4
+
+[contracts.news-gov-v6]
+path = 'contracts/news-gov-v6.clar'
+clarity_version = 5
+epoch = 3.4
+
+# Generated from news-gov-v6.clar by scripts/gen-testnet-gov-v6.mjs. Do not edit
+# by hand. Separate generator from v5's: v6 has no VETO_WINDOW to substitute.
+[contracts.news-gov-v6-testnet]
+path = 'contracts/news-gov-v6-testnet.clar'
+clarity_version = 5
+epoch = 3.4
+
 [repl.analysis]
 passes = ['check_checker']
 [repl.analysis.check_checker]
