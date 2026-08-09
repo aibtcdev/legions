@@ -18,7 +18,7 @@ const anyone = accounts.get("wallet_5")!;
 
 const TREASURY = "news-treasury-v6";
 const GOV = "news-gov-v6";
-const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
+const SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
 
 const VOTING_DELAY = 2;
 const VOTE_WINDOW = 30;

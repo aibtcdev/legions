@@ -26,7 +26,7 @@ const GOV = "news-gov-v6";
 const govPrincipal = `${deployer}.${GOV}`;
 
 // The REAL testnet sBTC token, pulled into simnet via [[project.requirements]].
-const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
+const SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
 
 // Must match news-gov-v6.clar (burn blocks). No VETO_WINDOW in v6.
 const VOTING_DELAY = 2;
