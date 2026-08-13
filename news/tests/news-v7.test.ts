@@ -36,6 +36,7 @@ const FAILED = 2n;
 
 // Errors.
 const ERR_INELIGIBLE = 401n;
+const ERR_CONCLUDE_WINDOW_PASSED = 435n;
 const ERR_BELOW_MIN_CONTRIBUTION = 437n;
 const ERR_TOO_FEW_MEMBERS = 441n;
 
@@ -134,6 +135,19 @@ function weightOf(who: string): bigint {
   return BigInt(dump("get-weight", [Cl.principal(who)]).replace("u", ""));
 }
 
+/** What a principal owns minus what a live proposal has locked. */
+function freeWeightOf(who: string): bigint {
+  return BigInt(dump("get-free-weight", [Cl.principal(who)]).replace("u", ""));
+}
+
+function lockedOf(who: string): bigint {
+  return BigInt(dump("locked-of", [Cl.principal(who)]).replace("u", ""));
+}
+
+function totalWeight(): bigint {
+  return BigInt(dump("get-total-weight").replace("u", ""));
+}
+
 function contribute(who: string, amount = CONTRIB) {
   faucet(who);
   return simnet.callPublicFn(GOV, "contribute", [Cl.uint(amount)], who).result;
@@ -183,6 +197,12 @@ function mineToVotingOpen() {
 
 function mineToConcludable() {
   simnet.mineEmptyBurnBlocks(VOTING_DELAY + VOTE_WINDOW);
+}
+
+/** From a fresh propose: burn past the conclude window, so the story expires
+ *  and the bond frees itself with no transaction. */
+function mineToLapsed() {
+  simnet.mineEmptyBurnBlocks(VOTING_DELAY + VOTE_WINDOW + CONCLUDE_WINDOW);
 }
 
 /** Wire the treasury and seat `n` equal-weight members. */
@@ -349,6 +369,95 @@ describe("quorum 5 keeps one reader enough at 21 members", () => {
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
     expect(storyReason(1)).toBe("voted-down");
     expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21));
+  });
+});
+
+describe("the member count can only ever climb", () => {
+  // The 21-member floor is an ACTIVATION gate, not a running requirement: once
+  // the legion is on it must stay on. That holds today because no line in this
+  // contract subtracts weight, which is a fact about the code rather than a rule
+  // the code enforces on itself. These cases are the tripwire for it.
+  //
+  // The state that looks most like weight leaving is a live proposal, which
+  // locks the proposer's ENTIRE weight. It is a hold, not a deduction: `Weights`
+  // is untouched and only `LockedWeight` moves.
+
+  it("locks the proposer's whole weight without spending any of it", () => {
+    legionOf(MIN_MEMBERS);
+    expect(propose().result).toBeOk(Cl.uint(1));
+
+    // Nothing usable left, yet nothing lost, and the legion is still seated.
+    expect(freeWeightOf(proposer)).toBe(0n);
+    expect(lockedOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(membersMet()).toBe(true);
+  });
+
+  it("holds the count across a story that passes and pays", () => {
+    legionOf(MIN_MEMBERS);
+    const totalBefore = totalWeight();
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+
+    // Getting paid moves sBTC, never voting rights.
+    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(freeWeightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(lockedOf(proposer)).toBe(0n);
+    expect(totalWeight()).toBe(totalBefore);
+  });
+
+  it("holds the count across a story that expires with no transaction", () => {
+    legionOf(MIN_MEMBERS);
+    const totalBefore = totalWeight();
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToLapsed();
+
+    // Nobody called anything. The hold released itself on the deadline.
+    expect(conclude(1).result).toBeErr(Cl.uint(ERR_CONCLUDE_WINDOW_PASSED));
+    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(freeWeightOf(proposer)).toBe(BigInt(CONTRIB));
+    expect(lockedOf(proposer)).toBe(0n);
+    expect(totalWeight()).toBe(totalBefore);
+  });
+
+  it("keeps a locked proposer voting at full strength on someone else's story", () => {
+    legionOf(MIN_MEMBERS);
+    expect(propose(proposer).result).toBeOk(Cl.uint(1));
+    // A second agent opens its own story once the global slot reopens.
+    simnet.mineEmptyBurnBlocks(PROPOSE_INTERVAL);
+    expect(propose(voter1).result).toBeOk(Cl.uint(2));
+    mineToVotingOpen();
+
+    // The first proposer has zero FREE weight and still votes with all of it.
+    expect(freeWeightOf(proposer)).toBe(0n);
+    expect(vote(proposer, 2, true).result).toBeOk(Cl.bool(true));
+    expect(num(dump("get-story", [Cl.uint(2)]), "yesWeight")).toBe(BigInt(CONTRIB));
+  });
+
+  it("never lets a legion that switched on switch back off", () => {
+    legionOf(MIN_MEMBERS);
+    expect(membersMet()).toBe(true);
+
+    // Everything that could plausibly take weight away, one after another.
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+    simnet.mineEmptyBurnBlocks(PROPOSE_INTERVAL);
+    expect(propose(voter1).result).toBeOk(Cl.uint(2));
+    mineToLapsed();
+
+    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(membersMet()).toBe(true);
+    // And the gate stays open for the next story.
+    expect(dump("propose-status", [Cl.principal(voter2)])).toContain("membersOk: true");
   });
 });
 
