@@ -200,14 +200,17 @@ however many addresses one actor controls.
 
 ## Develop
 
-Requires **Clarinet 3.x** and **Clarity 5 / epoch 3.4**, which is what both live
-networks run.
+Requires **Clarinet 3.x**. v6 targets **Clarity 5 / epoch 3.4**; v7 targets
+**Clarity 6 / epoch 4.0**, live since Bitcoin block 960,230. These contracts are
+immutable, so the version chosen at publish is the one that version of the legion
+runs on for its whole life.
 
 ```bash
 npm install
-node scripts/gen-testnet-gov-v6.mjs   # regenerate the testnet build
-clarinet check                        # expect: 12 contracts checked
-npx vitest run                        # 213 tests
+node scripts/gen-testnet-gov-v6.mjs   # regenerate the v6 testnet build
+node scripts/gen-testnet-gov-v7.mjs   # regenerate the v7 testnet build
+clarinet check                        # expect: 16 contracts checked
+npx vitest run                        # 239 tests
 ```
 
 Older toolchains pin simnet to epoch 3.0, where `at-block` still resolves. That
