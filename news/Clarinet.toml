@@ -6,6 +6,12 @@ cache_dir = './.cache'
 [[project.requirements]]
 contract_id = 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token'
 
+# Our own mock sBTC, deployed to testnet after the 2026-07-30 reset wiped the
+# one above. Source of record in contracts/sbtc-token.clar. v7 uses this; v3 to
+# v6 still reference the old one, which is now a 404 on testnet.
+[[project.requirements]]
+contract_id = 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token'
+
 [contracts.news-treasury]
 path = 'contracts/news-treasury.clar'
 clarity_version = 3
