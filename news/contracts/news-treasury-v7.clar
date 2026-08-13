@@ -3,9 +3,13 @@
 ;; Behaviour is byte-for-byte v6's. It is redeployed only because `set-gov` is
 ;; one-time, so a new gov contract needs a new treasury to wire itself into.
 
-;; sBTC token
+;; sBTC token. This is OUR OWN mock (contracts/sbtc-token.clar), deployed to
+;; testnet after the 2026-07-30 reset wiped the third-party Faktory token that
+;; v3 to v6 referenced. That contract is now a 404 on testnet, so anything still
+;; pointing at it cannot be published.
 ;; MAINNET DEPLOY: swap this and the literal at every contract-call site below
-(define-constant SBTC 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token)
+;; for 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token
+(define-constant SBTC 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token)
 
 (define-constant DEPLOYER tx-sender)
 
@@ -97,7 +101,7 @@
   (begin
     (asserts! (is-gov contract-caller) ERR_UNAUTHORIZED)
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
-    (try! (contract-call? 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token transfer amount tx-sender current-contract none))
+    (try! (contract-call? 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token transfer amount tx-sender current-contract none))
     (var-set Balance (+ (var-get Balance) amount))
     (var-set WeightedBalance (+ (var-get WeightedBalance) amount))
     (print {
@@ -121,7 +125,7 @@
     (asserts! (is-some (var-get Gov)) ERR_NOT_WIRED)
     (asserts! (>= amount MIN_SPONSOR) ERR_BELOW_MIN)
     (asserts! (> (len name) u0) ERR_EMPTY_NAME)
-    (try! (contract-call? 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token transfer amount tx-sender current-contract none))
+    (try! (contract-call? 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token transfer amount tx-sender current-contract none))
     (var-set Balance (+ (var-get Balance) amount))
     (print {
       event: "sponsor-in",
@@ -160,8 +164,8 @@
     (var-set Balance (- bal amount))
     (var-set WeightedBalance (- weighted (/ (* weighted amount) bal)))
 
-    (try! (as-contract? ((with-ft 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token "sbtc-token" amount))
-      (try! (contract-call? 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token transfer amount tx-sender recipient none))))
+    (try! (as-contract? ((with-ft 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token "sbtc-token" amount))
+      (try! (contract-call? 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token transfer amount tx-sender recipient none))))
 
     (print {
       event: "execute-payout",
