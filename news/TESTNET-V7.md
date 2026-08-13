@@ -34,13 +34,23 @@ This is the real cost of the run. The repo has 10 `legion-agent-*` wallets, so
 wallet_create                       # password123, testnet
 # then fund each one:
 #   STX for gas          -> transfer from agent-01
-#   sBTC to contribute   -> STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token (faucet)
+#   sBTC to contribute   -> ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token (faucet)
 ```
 
-Each of the 21 needs sBTC for its contribution and STX for gas. The Faktory
-faucet gives 6.9 sBTC per call and is public, so sBTC is cheap; STX is the
+Each of the 21 needs sBTC for its contribution and STX for gas. Our own mock
+sBTC has a public `faucet` giving 6.9 sBTC per call, so sBTC is free; STX is the
 constraint, and the Hiro faucet is IP-rate-limited and will 1015 you. Fund from
 agent-01 instead.
+
+> **The token is ours, and that matters for what a testnet run proves.** v7
+> points at `ST2VN1G6….sbtc-token` (source of record in
+> `contracts/sbtc-token.clar`), deployed after the 2026-07-30 testnet reset wiped
+> the third-party Faktory token that v3 to v6 reference. That old contract is now
+> a 404, so those versions can no longer be published at all. Because our faucet
+> mints without limit, **every economic property of the legion is unenforced on
+> testnet**: voting weight is free, so the Sybil and drain findings in the audit
+> are not merely cheap there, they are costless. Testnet proves mechanics, never
+> economics.
 
 Until all 21 have contributed, `propose-story` returns `u441` and
 `propose-status` reports `membersOk: false` with a live `memberCount`.
