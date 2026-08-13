@@ -28,7 +28,9 @@ const MIN_WEIGHT = 10_000;
 const MIN_CONTRIBUTION = 10_000;
 const PROPOSE_INTERVAL = 18;
 const MIN_MEMBERS = 21;
-const VOTING_QUORUM = 5;
+// No turnout floor by weight. MIN_PARTICIPANTS carries the participation rule.
+const VOTING_QUORUM = 0;
+const MIN_PARTICIPANTS = 1;
 
 // Statuses.
 const PASSED = 1n;
@@ -222,7 +224,7 @@ describe("v7 parameters", () => {
     expect(num(p, "votingQuorum")).toBe(BigInt(VOTING_QUORUM));
     // Everything else is v6's, unchanged.
     expect(num(p, "votingThreshold")).toBe(66n);
-    expect(num(p, "minParticipants")).toBe(1n);
+    expect(num(p, "minParticipants")).toBe(BigInt(MIN_PARTICIPANTS));
     expect(num(p, "minWeight")).toBe(BigInt(MIN_WEIGHT));
     expect(num(p, "minContribution")).toBe(BigInt(MIN_CONTRIBUTION));
     expect(num(p, "drawBps")).toBe(5n);
@@ -319,7 +321,7 @@ describe("the 21-member floor on proposing", () => {
   });
 });
 
-describe("quorum 5 keeps one reader enough at 21 members", () => {
+describe("one reader is enough", () => {
   it("pays on a single yes vote", () => {
     legionOf(MIN_MEMBERS);
     expect(propose().result).toBeOk(Cl.uint(1));
@@ -336,7 +338,7 @@ describe("quorum 5 keeps one reader enough at 21 members", () => {
     expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21 - DRAW_AT_21));
   });
 
-  it("is exactly at the line: one vote is 5% of the 20 eligible shares", () => {
+  it("pays on a vote worth far less than the old 5% floor", () => {
     legionOf(MIN_MEMBERS);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
@@ -347,10 +349,14 @@ describe("quorum 5 keeps one reader enough at 21 members", () => {
     const cast = num(story, "yesWeight") + num(story, "noWeight");
     // The proposer's own weight is excluded from the denominator.
     expect(eligible).toBe(BigInt(POOL_AT_21 - CONTRIB));
-    expect((cast * 100n) / eligible).toBe(BigInt(VOTING_QUORUM));
+    // 5% of eligible, which used to be the exact line. Nothing reads it now.
+    expect((cast * 100n) / eligible).toBe(5n);
+
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
-  it("still pays nobody on silence", () => {
+  it("still pays nobody on silence, which is MIN_PARTICIPANTS not quorum", () => {
     legionOf(MIN_MEMBERS);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToConcludable();
@@ -360,7 +366,7 @@ describe("quorum 5 keeps one reader enough at 21 members", () => {
     expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21));
   });
 
-  it("clears quorum but fails the threshold on a lone no vote", () => {
+  it("still fails the 66% threshold on a lone no vote", () => {
     legionOf(MIN_MEMBERS);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
@@ -461,31 +467,79 @@ describe("the member count can only ever climb", () => {
   });
 });
 
-describe("quorum 5 is exact at 21 and degrades as the legion grows", () => {
-  // KNOWN BOUNDARY, documented rather than fixed: MIN_MEMBERS is a floor, not a
-  // cap. At 21 equal members one vote is exactly 5% of eligible. At 22 it is
-  // 4.76%, which integer division floors to 4, so a single reader is no longer
-  // enough and two are required. If the legion is expected to grow past 21,
-  // VOTING_QUORUM has to come down again or be made to scale.
-  it("needs two readers once a 22nd member joins", () => {
+describe("the bar does not move as the legion grows or goes quiet", () => {
+  // This is what quorum 0 buys. Under a weight-share quorum the denominator was
+  // all SEATED weight, so every new member and every dormant whale raised the
+  // number of ACTIVE readers a payout needed. At u0 the rule is a headcount and
+  // nothing about the roster can move it.
+  //
+  // Each case below is annotated with what the old 5% quorum would have done.
+
+  it("pays on one reader at 22 members, where 5% needed two", () => {
     legionOf(MIN_MEMBERS + 1);
     expect(memberCount()).toBe(22n);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
-    expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
-    expect(storyReason(1)).toBe("no-quorum");
+    // 10M cast of 210M eligible = 4.76%, which floored to 4 and failed at 5.
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+    expect(storyReason(1)).toBe("paid");
   });
 
-  it("pays at 22 members when a second reader votes", () => {
-    legionOf(MIN_MEMBERS + 1);
+  it("pays on one reader at 25 members, where 5% needed two", () => {
+    legionOf(25);
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+  });
+
+  it("pays on one small reader while a dormant whale holds most of the weight", () => {
+    // The case a weight-share quorum handles worst: someone joins big, never
+    // votes again, and drags every future turnout percentage down with them.
+    legionOf(MIN_MEMBERS);
+    const whale = MEMBERS[MIN_MEMBERS];
+    expect(contribute(whale, 20 * CONTRIB)).toBeOk(Cl.uint(20 * CONTRIB));
+    expect(memberCount()).toBe(22n);
+
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    // The whale says nothing. One ordinary member reads the story and votes.
+    expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
+
+    const story = dump("get-story", [Cl.uint(1)]);
+    const cast = num(story, "yesWeight");
+    // 10M of 400M eligible = 2%, less than half the old floor.
+    expect((cast * 100n) / num(story, "eligibleSnapshot")).toBe(2n);
+
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+    expect(storyReason(1)).toBe("paid");
+  });
+
+  it("still lets one no vote block one yes at any size", () => {
+    legionOf(25);
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(voter2, 1, false).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    // 50% of cast, under the 66% threshold. Quorum was never what stopped this.
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
+    expect(storyReason(1)).toBe("voted-down");
+  });
+
+  it("carries two yes votes over one no", () => {
+    legionOf(25);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, 1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(MEMBERS[3], 1, false).result).toBeOk(Cl.bool(true));
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    // 20M yes of 30M cast = 66%, exactly the threshold.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
-    expect(storyReason(1)).toBe("paid");
   });
 });
