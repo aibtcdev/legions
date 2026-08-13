@@ -112,6 +112,11 @@ plan:
   - id: 1
     transactions:
     - transaction-type: emulated-contract-publish
+      contract-name: sbtc-token
+      emulated-sender: ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW
+      path: .cache/requirements/ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token.clar
+      clarity-version: 4
+    - transaction-type: emulated-contract-publish
       contract-name: news-treasury-v6
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/news-treasury-v6.clar
