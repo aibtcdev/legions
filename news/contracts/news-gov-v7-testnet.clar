@@ -579,6 +579,12 @@
         (> cast u0)
         (>= (/ (* (get yesWeight story) u100) cast) VOTING_THRESHOLD)
       ))
+      ;; The weight approving a payout must be at least the payout itself. With
+      ;; no turnout floor, this is what stops a floor-stake wallet authorising a
+      ;; draw from a pool of any size: the bar tracks the money at stake rather
+      ;; than the roster, so it is immune to dormant members while still costing
+      ;; an attacker real capital. See the note in conclude's backing branch.
+      (backingMet (>= (get yesWeight story) (get draw story)))
       (draw (get draw story))
       (poolShort (> draw (contract-call? .news-treasury-v7 get-balance)))
     )
@@ -618,6 +624,19 @@
           })
           (ok STATUS_FAILED)
         )
+        (if (not backingMet)
+          (begin
+            ;; Distinct from "voted-down": the story was not rejected, it was
+            ;; approved by too little weight to be worth this much money.
+            (map-set Stories proposalId
+              (merge story { status: STATUS_FAILED, reason: "under-backed" }))
+            (print {
+              event: "conclude", proposalId: proposalId, outcome: "failed",
+              reason: "under-backed", yesWeight: (get yesWeight story),
+              draw: draw,
+            })
+            (ok STATUS_FAILED)
+          )
         (if poolShort
           (begin
             (map-set Stories proposalId
@@ -644,7 +663,7 @@
             })
             (ok STATUS_PASSED)
           )
-        )
+        ))
       )
     )
   )
