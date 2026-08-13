@@ -57,7 +57,21 @@ Until all 21 have contributed, `propose-story` returns `u441` and
 
 ## 1. Deploy
 
-v7 targets **Clarity 5 / epoch 3.4**. Regenerate the testnet build first so it
+v7 targets **Clarity 6 / epoch 4.0**, live on mainnet since Bitcoin block 960,230
+(about 30 July 2026). v6 targeted Clarity 5; v7 moves up because these contracts
+are immutable, so the version chosen at publish is the version this legion runs
+on for its whole life. Verified: the sources compile and the full suite passes
+at Clarity 6 with no changes.
+
+> **Check what actually got published.** The MCP `deploy_contract` pinned
+> Clarity 4 when it published v6. Nothing in v7 uses Clarity 5 or 6 syntax, so a
+> Clarity 4 publish would still work, and you would silently get a contract that
+> cannot ever call `get-bitcoin-tx-output?` or `verify-merkle-proof`. After
+> deploying, read the published version back with `get_contract_info` and
+> confirm it is 6. If the MCP pins something older, deploy through Clarinet
+> instead.
+
+Regenerate the testnet build first so it
 cannot drift from the mainnet source:
 
 ```bash
