@@ -4,9 +4,9 @@ import { Cl } from "@stacks/transactions";
 // `simnet` is injected globally by vitest-environment-clarinet.
 //
 // v7 = v6 + a membership floor on proposing (MIN_MEMBERS 21) and VOTING_QUORUM
-// 10 -> 5. Everything else is v6 and is already covered by news-v6.test.ts, so
-// this suite exercises the floor, the counter behind it, and the quorum
-// arithmetic the floor forces. Timing still counts BURN blocks
+// 10 -> 0. Everything else is v6 and is already covered by news-v6.test.ts, so
+// this suite exercises the floor, the counter behind it, and what a payout
+// requires now that turnout is a headcount. Timing still counts BURN blocks
 // (get-timing-mode == "PROD-BURN"), so windows are crossed with
 // simnet.mineEmptyBurnBlocks().
 const accounts = simnet.getAccounts();
@@ -17,8 +17,9 @@ const TREASURY = "news-treasury-v7";
 const GOV = "news-gov-v7";
 const govPrincipal = `${deployer}.${GOV}`;
 
-// The REAL testnet sBTC token, pulled into simnet via [[project.requirements]].
-const SBTC = "STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token";
+// Our own mock sBTC on testnet, pulled into simnet via [[project.requirements]].
+// Source of record in contracts/sbtc-token.clar.
+const SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
 
 // Must match news-gov-v7.clar (burn blocks).
 const VOTING_DELAY = 2;
