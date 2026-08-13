@@ -468,6 +468,85 @@ describe("the member count can only ever climb", () => {
   });
 });
 
+describe("approving weight must cover the payout", () => {
+  // With no turnout floor, this is what stops a floor-stake wallet authorising a
+  // draw from a pool of any size. The bar is the draw itself, so it tracks the
+  // money at stake and never the roster.
+  //
+  // KNOWN LIMIT, measured not assumed: this prices the attack, it does not
+  // prevent it. Backing weight is bought once and approval power never depletes,
+  // while the draw recurs, so an attacker holding just over one draw breaks even
+  // after roughly two stories. Raising the multiple raises the payback period in
+  // proportion. See the audit for the numbers.
+
+  it("rejects a payout approved by less weight than it pays out", () => {
+    legionOf(MIN_MEMBERS);
+    // A 22nd member at the floor: eligible to vote, far below the 105,000 draw.
+    const small = MEMBERS[MIN_MEMBERS];
+    expect(contribute(small, MIN_CONTRIBUTION)).toBeOk(Cl.uint(MIN_CONTRIBUTION));
+
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(small, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
+    expect(storyReason(1)).toBe("under-backed");
+    // Nothing left the pool.
+    expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21 + MIN_CONTRIBUTION));
+  });
+
+  it("reports under-backed distinctly from voted-down", () => {
+    legionOf(MIN_MEMBERS);
+    const small = MEMBERS[MIN_MEMBERS];
+    contribute(small, MIN_CONTRIBUTION);
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(small, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    conclude(1);
+    // Unanimous support, so it was not voted down. It was under-backed.
+    const story = dump("get-story", [Cl.uint(1)]);
+    expect(num(story, "noWeight")).toBe(0n);
+    expect(num(story, "yesWeight")).toBe(BigInt(MIN_CONTRIBUTION));
+    expect(storyReason(1)).toBe("under-backed");
+  });
+
+  it("lets one ordinary member clear the bar with room to spare", () => {
+    legionOf(MIN_MEMBERS);
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
+
+    const story = dump("get-story", [Cl.uint(1)]);
+    const backing = num(story, "yesWeight");
+    const draw = num(story, "draw");
+    expect(backing).toBeGreaterThanOrEqual(draw);
+    // A 1/21 member holds about 95x the required backing.
+    expect(backing / draw).toBeGreaterThan(90n);
+
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+  });
+
+  it("adds small voters together to clear the bar", () => {
+    legionOf(MIN_MEMBERS);
+    // Backing is the SUM of yes weight, not a per-voter test.
+    const a = MEMBERS[MIN_MEMBERS];
+    const b = MEMBERS[MIN_MEMBERS + 1];
+    contribute(a, 60_000);
+    contribute(b, 60_000);
+
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(a, 1, true).result).toBeOk(Cl.bool(true));
+    expect(vote(b, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    // 120,000 of combined backing against a draw of ~105,060.
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+  });
+});
+
 describe("the bar does not move as the legion grows or goes quiet", () => {
   // This is what quorum 0 buys. Under a weight-share quorum the denominator was
   // all SEATED weight, so every new member and every dormant whale raised the
