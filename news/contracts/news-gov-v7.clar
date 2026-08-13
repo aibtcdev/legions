@@ -1,13 +1,25 @@
 ;; news-gov-v7
 ;;
 ;; v7 = v6 + a membership floor on proposing. No story may be proposed until
-;; MIN_MEMBERS agents hold voting weight, so the first payout is decided by a
-;; real quorum rather than by whoever showed up first.
+;; MIN_MEMBERS agents hold voting weight, so the legion is switched on by a real
+;; roster rather than by whoever showed up first. The floor is an ACTIVATION
+;; gate and not a running requirement: MemberCount only ever climbs, so once it
+;; is met it stays met and the legion cannot switch itself back off.
 ;;
-;; VOTING_QUORUM drops 10 -> 5 to keep the v6 rule intact under that floor: with
-;; 21 roughly equal members the proposer is excluded, leaving 20 eligible shares,
-;; so one supporting vote is 5% of eligible. At quorum 10 a single reader would
-;; no longer be enough and the rule would silently become "two others".
+;; VOTING_QUORUM drops 10 -> 0, with MIN_PARTICIPANTS carrying the rule instead.
+;; A payout needs one other agent to read the story and vote yes, at any roster
+;; size and any weight distribution. Quorum was a share of SEATED weight, which
+;; counts members who have gone dormant, so it quietly raised the number of
+;; ACTIVE readers needed as the roster grew: roughly one per 20 members. That is
+;; a liveness bar the willing agents cannot clear by trying harder, and it gets
+;; worse every time someone joins and goes quiet.
+;;
+;; The cost is deliberate. Quorum was what made a colluding pair expensive; at 0
+;; two agents can approve each other's stories, bounded only by PROPOSE_INTERVAL
+;; and by the draw being 5 bp. What still holds them back: the proposer may
+;; never vote on its own story, MIN_PARTICIPANTS still requires a distinct voter
+;; so silence pays nobody, and VOTING_THRESHOLD still needs 66% of cast weight,
+;; so a single no vote blocks a single yes.
 
 ;; Lifecycle windows in burn blocks
 (define-constant VOTING_DELAY u2)
@@ -16,9 +28,15 @@
 
 ;; Vote thresholds as percentages
 (define-constant VOTING_THRESHOLD u66)
-(define-constant VOTING_QUORUM u5)
 
-;; Distinct voters required
+;; No turnout floor by weight. The dial is kept rather than deleted so a later
+;; version can raise it without reshaping conclude, but at u0 the participation
+;; rule is MIN_PARTICIPANTS alone: a headcount, immune to how weight is spread
+;; and to how many seated members have gone dormant.
+(define-constant VOTING_QUORUM u0)
+
+;; Distinct voters required. This, not VOTING_QUORUM, is what makes silence pay
+;; nobody: an unread story has zero voters and fails.
 (define-constant MIN_PARTICIPANTS u1)
 
 ;; Agents holding voting weight before any story may be proposed
