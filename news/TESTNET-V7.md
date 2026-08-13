@@ -15,7 +15,8 @@ names; nothing migrates.
 |---|---|---|
 | Members required to propose | none | **21** (`MIN_MEMBERS`), once, then never again |
 | `VOTING_QUORUM` | 10% of eligible | **0**, no turnout floor by weight |
-| What a payout needs | one reader holding 10% of eligible | one reader, whoever they are |
+| Backing | none | **yes weight must be at least the draw**, else `under-backed` |
+| What a payout needs | one reader holding 10% of eligible | one reader holding at least the draw |
 | New error | | `u441` `ERR_TOO_FEW_MEMBERS` |
 | New reads | | `get-member-count`, `members-met`, `minMembers` in `get-params`, `membersOk` / `memberCount` / `minMembers` in `propose-status` |
 | Everything else | | identical |
@@ -209,6 +210,16 @@ payout requires does not change as the legion grows or as members go quiet.
 
 ## Notes
 
+- **Backing prices the drain, it does not prevent it.** `conclude` requires the
+  yes weight to be at least the draw, which is what stops a floor-stake wallet
+  authorising a payout from a pool of any size. The bar is the draw itself, so it
+  tracks the money at stake and never the roster, and an ordinary member of a
+  21-way legion holds about 95x it. But backing weight is bought once while the
+  draw recurs, so an attacker holding just over one draw breaks even after about
+  two stories and profits after that. Measured, not assumed: a 175,000-sat stake
+  extracted 629,734 over six stories. Raising the multiple raises the payback
+  period in proportion, and costs liveness in the same proportion. This is the
+  open trade-off; see the audit.
 - **`VOTING_QUORUM` is 0, and the dial is kept rather than deleted.** There is
   no turnout floor by weight; `MIN_PARTICIPANTS` (1) is the whole participation
   rule. The constant stays in the source and in `get-params` so a later version
