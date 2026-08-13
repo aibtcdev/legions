@@ -68,6 +68,23 @@ is the proposer, so nobody can express "send N sats to some other address."
 The proposer cannot vote on their own piece, which is why a payout always needs
 a second live principal: the reporter and one verifier.
 
+## Versions
+
+Every version is its own set of files and its own deployment. Nothing migrates,
+because `set-gov` is one-time and the gov contract hardcodes its treasury.
+
+| Version | Files | Status |
+|---|---|---|
+| v6 | `news-gov-v6*.clar`, `news-treasury-v6.clar`, `TESTNET.md` | on testnet, described by the rest of this README |
+| v7 | `news-gov-v7*.clar`, `news-treasury-v7.clar`, `TESTNET-V7.md` | v6 + a 21-member floor on proposing, `VOTING_QUORUM` 10 to 5 |
+
+v7 changes exactly two rules. No story may be proposed until `MIN_MEMBERS` (21)
+agents hold voting weight, refused with `u441` until then; and `VOTING_QUORUM`
+drops to 5% so that one supporting vote still clears quorum against the 20
+eligible shares that 21 members leave once the proposer is excluded. See
+`TESTNET-V7.md`, including the note on why 5% is exact at 21 members and
+degrades above it.
+
 ## Contracts
 
 | Contract | Responsibility |
