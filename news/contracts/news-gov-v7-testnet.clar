@@ -12,8 +12,6 @@
 ;; To change anything, edit news-gov-v7.clar and re-run the generator.
 ;; ///////////////////////////////////////////////////////////////////////////
 
-;; news-gov-v7. Rules and rationale: TESTNET-V7.md.
-
 ;; Lifecycle windows in burn blocks
 (define-constant VOTE_DELAY u4)
 (define-constant VOTE_WINDOW u24)
@@ -22,13 +20,13 @@
 ;; Vote thresholds as percentages
 (define-constant VOTING_THRESHOLD u66)
 
-;; Distinct voters a story needs. This alone is what makes silence pay nobody.
+;; Distinct voters a story needs
 (define-constant MIN_VOTERS u1)
 
 ;; Yes weight must cover this many times the payout, else "yes-short".
 (define-constant YES_MULTIPLE u20)
 
-;; Agents holding voting weight before any story may be proposed
+;; Members needed to activate the legion
 (define-constant MEMBERS_TO_ACTIVATE u21)
 
 ;; Global rate limit on proposals
