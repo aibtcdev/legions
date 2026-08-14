@@ -32,6 +32,8 @@ const MIN_MEMBERS = 21;
 // No turnout floor by weight. MIN_PARTICIPANTS carries the participation rule.
 const VOTING_QUORUM = 0;
 const MIN_PARTICIPANTS = 1;
+// Yes weight must cover this many times the draw, or the story is under-backed.
+const BACKING_MULTIPLE = 20;
 
 // Statuses.
 const PASSED = 1n;
@@ -222,6 +224,7 @@ describe("v7 parameters", () => {
   it("publishes the membership floor and the quorum that goes with it", () => {
     const p = dump("get-params");
     expect(num(p, "minMembers")).toBe(BigInt(MIN_MEMBERS));
+    expect(num(p, "backingMultiple")).toBe(BigInt(BACKING_MULTIPLE));
     expect(num(p, "votingQuorum")).toBe(BigInt(VOTING_QUORUM));
     // Everything else is v6's, unchanged.
     expect(num(p, "votingThreshold")).toBe(66n);
@@ -520,10 +523,11 @@ describe("approving weight must cover the payout", () => {
 
     const story = dump("get-story", [Cl.uint(1)]);
     const backing = num(story, "yesWeight");
-    const draw = num(story, "draw");
-    expect(backing).toBeGreaterThanOrEqual(draw);
-    // A 1/21 member holds about 95x the required backing.
-    expect(backing / draw).toBeGreaterThan(90n);
+    const bar = num(story, "draw") * BigInt(BACKING_MULTIPLE);
+    expect(backing).toBeGreaterThanOrEqual(bar);
+    // A 1/21 member clears the K=20 bar about 4.8x over, which is the liveness
+    // headroom the multiple was chosen for.
+    expect(backing / bar).toBeGreaterThanOrEqual(4n);
 
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
@@ -531,19 +535,36 @@ describe("approving weight must cover the payout", () => {
 
   it("adds small voters together to clear the bar", () => {
     legionOf(MIN_MEMBERS);
-    // Backing is the SUM of yes weight, not a per-voter test.
+    // Backing is the SUM of yes weight, not a per-voter test, so members too
+    // small to authorise a payout alone can still authorise one together.
     const a = MEMBERS[MIN_MEMBERS];
     const b = MEMBERS[MIN_MEMBERS + 1];
-    contribute(a, 60_000);
-    contribute(b, 60_000);
+    contribute(a, 1_200_000);
+    contribute(b, 1_200_000);
 
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(a, 1, true).result).toBeOk(Cl.bool(true));
     expect(vote(b, 1, true).result).toBeOk(Cl.bool(true));
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
-    // 120,000 of combined backing against a draw of ~105,060.
+    // 2,400,000 combined against a bar of 20 x ~106,200.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
+  });
+
+  it("refuses that same pair when only one of them votes", () => {
+    legionOf(MIN_MEMBERS);
+    const a = MEMBERS[MIN_MEMBERS];
+    const b = MEMBERS[MIN_MEMBERS + 1];
+    contribute(a, 1_200_000);
+    contribute(b, 1_200_000);
+
+    expect(propose().result).toBeOk(Cl.uint(1));
+    mineToVotingOpen();
+    expect(vote(a, 1, true).result).toBeOk(Cl.bool(true));
+    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    // 1,200,000 alone is under the ~2,124,000 bar.
+    expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
+    expect(storyReason(1)).toBe("under-backed");
   });
 });
 
