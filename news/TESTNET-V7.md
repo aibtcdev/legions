@@ -3,7 +3,7 @@
 v7 is v6 plus three rules. **No story may be proposed until 21 agents hold
 voting weight.** Once they do, **one other agent voting yes is enough to pay**,
 at any roster size, because the weight-based quorum is removed entirely and
-`MIN_PARTICIPANTS` carries the rule instead. And **that agent's weight must
+`MIN_VOTERS` carries the rule instead. And **that agent's weight must
 cover 20x the payout**, so the vote approving the money is worth more than the
 money.
 
@@ -15,16 +15,16 @@ names; nothing migrates.
 
 | | v6 | v7 |
 |---|---|---|
-| Members required to propose | none | **21** (`MIN_MEMBERS`), once, then never again |
+| Members required to propose | none | **21** (`MEMBERS_TO_ACTIVATE`), once, then never again |
 | Turnout floor by weight | `VOTING_QUORUM` 10% of eligible | **removed entirely**, not set to zero |
-| Backing | none | **yes weight must cover 20x the draw**, else `under-backed` |
-| What a payout needs | one reader holding 10% of eligible | one reader holding 20x the draw, or several summing to it |
+| Yes weight | none | **yes weight must cover 20x the payout**, else `yes-short` |
+| What a payout needs | one reader holding 10% of eligible | one reader holding 20x the payout, or several summing to it |
 | New error | | `u441` `ERR_TOO_FEW_MEMBERS` |
-| New reads | | `get-member-count`, `members-met`, `minMembers` in `get-params`, `membersOk` / `memberCount` / `minMembers` in `propose-status` |
+| New reads | | `get-member-count`, `is-activated`, `membersToActivate` in `get-params`, `membersOk` / `memberCount` / `membersToActivate` in `propose-status` |
 | Everything else | | identical |
 
 A principal is counted **once**, on the contribution that first takes its weight
-to `MIN_WEIGHT` (10,000). Weight is never reduced anywhere in the contract, so
+to `MIN_WEIGHT_TO_ACT_TO_ACT` (10,000). Weight is never reduced anywhere in the contract, so
 the count only goes up and cannot be gamed by topping up repeatedly.
 
 ## The one hard prerequisite: 21 funded wallets
@@ -122,9 +122,9 @@ Sanity checks:
 ```clarity
 (contract-call? .news-gov-v7-testnet get-timing-mode)   ;; "TEST-STACKS-BLOCKS"
 (contract-call? .news-treasury-v7 get-gov)              ;; (some ...news-gov-v7-testnet)
-(contract-call? .news-gov-v7-testnet get-params)        ;; minMembers u21, no votingQuorum field
+(contract-call? .news-gov-v7-testnet get-params)        ;; membersToActivate u21, no votingQuorum field
 (contract-call? .news-gov-v7-testnet get-member-count)  ;; u0
-(contract-call? .news-gov-v7-testnet members-met)       ;; false
+(contract-call? .news-gov-v7-testnet is-activated)       ;; false
 ```
 
 ## 2. Seat the 21
@@ -142,7 +142,7 @@ Watch the counter climb. The `contribute` print event carries `joined` and
 
 ```clarity
 (contract-call? .news-gov-v7-testnet get-member-count)  ;; u1 ... u21
-(contract-call? .news-gov-v7-testnet members-met)       ;; false until the 21st
+(contract-call? .news-gov-v7-testnet is-activated)       ;; false until the 21st
 ```
 
 **Worth firing once each, before the floor is met:**
@@ -168,7 +168,7 @@ agent holds 1/21 of the vote.
 Expected numbers at a 210,000,000 pool:
 
 ```
-draw     = 0.05% (5 bp) of 210,000,000         = 105,000    (all of it to the proposer)
+payout     = 0.05% (5 bp) of 210,000,000         = 105,000    (all of it to the proposer)
 bond     = the proposer's ENTIRE weight        = 10,000,000 (locked, never spent)
 eligible = 210,000,000 - 10,000,000 proposer   = 200,000,000
 ```
@@ -181,23 +181,23 @@ Wait out the 4-block pending period, then **one other agent votes yes**:
 ```
 
 That single vote is all it takes, provided it is big enough. There is no turnout
-floor by weight; one distinct voter meets `MIN_PARTICIPANTS`, yes is 100% of cast
+floor by weight; one distinct voter meets `MIN_VOTERS`, yes is 100% of cast
 so the 66% threshold is met, and the voter's 10,000,000 of weight covers the
-2,100,000 backing bar (20 x the 105,000 draw) about 4.8x over. Wait out the
+2,100,000 yes weight bar (20 x the 105,000 payout) about 4.8x over. Wait out the
 24-block vote window and conclude:
 
 ```clarity
 (contract-call? .news-gov-v7-testnet conclude u1)   ;; (ok u1) PASSED
 ```
 
-Verify the proposer is `+105,000` sBTC, the treasury is down by exactly the draw,
+Verify the proposer is `+105,000` sBTC, the treasury is down by exactly the payout,
 and `get-total-weight` is unchanged.
 
 ## 4. Silence still pays nobody
 
 Propose again, let nobody vote, conclude: `FAILED`, reason `no-voters`. This is
 the rule the legion exists to express, and v7 does not soften it. With quorum at
-0 it is `MIN_PARTICIPANTS` that fails an unread story, not the turnout maths: no
+0 it is `MIN_VOTERS` that fails an unread story, not the turnout maths: no
 voters, no payout.
 
 ## 5. Growth does not raise the bar
@@ -214,51 +214,56 @@ payout requires does not change as the legion grows or as members go quiet.
 
 ## Notes
 
-- **Backing prices the drain, it does not prevent it.** `conclude` requires the
-  yes weight to cover `BACKING_MULTIPLE` (20) times the draw, which is what stops
-  a floor-stake wallet authorising a payout from a pool of any size. The bar is a
-  share of the money at stake and never of the roster, so it prices a self-dealer
-  without reintroducing the dormancy problem.
+- **The yes-weight rule prices the drain, it does not prevent it.** `conclude`
+  requires the weight voting yes to cover `YES_MULTIPLE` (20) times the payout,
+  else the story settles `yes-short`. That is what stops a floor-stake wallet
+  releasing money from a pool of any size. The bar is a share of the money at
+  stake and never of the roster, so it prices a self-dealer without
+  reintroducing the dormancy problem.
 
-  Read the multiple as **the attacker's payback period in stories**: backing
-  costs 20 draws to buy and earns one draw per story, so a self-dealer waits
-  about 20 stories, roughly 3 days at the mainnet rate of 8 a day, before
-  profiting. Voting weight is never consumed, so no multiple makes extraction
-  impossible; K only sets the price and the delay. Measured at K=1, a
-  175,000-sat stake extracted 629,734 over six stories; K=20 multiplies that
-  wait by twenty without changing its shape.
+  Read the multiple as **the attacker's payback period in stories**: clearing the
+  bar costs 20 payouts' worth of weight to buy, and earns one payout per story,
+  so a self-dealer waits about 20 stories, roughly 3 days at the mainnet rate of
+  8 a day, before profiting. Voting weight is never consumed, so no multiple
+  makes extraction impossible; it only sets the price and the delay. Measured at
+  a multiple of 1, a 175,000-sat stake extracted 629,734 over six stories; 20
+  multiplies that wait by twenty without changing its shape.
 
   The ceiling is liveness. A member of an n-way legion holds about 1/n of the
-  pool, so one ordinary reader can still approve alone while K <= 2000/n: up to
-  95 at 21 members, 40 at 50, 20 at 100. At 21 members a 1/21 holder clears the
-  bar about 4.8x over. Backing is the SUM of yes weight, so members too small to
-  authorise alone can still authorise together, and a member at the 10,000-sat
-  floor can approve alone only while the pool is under 1,000,000 sats, since the
-  bar is 1% of the pool at K=20. At a 5,000,000-sat pool the solo-approval
-  threshold is 50,000 sats of weight, five times the join minimum, and smaller
-  members vote and combine rather than authorising alone. Closing the hole properly needs backing to cover cumulative payouts per
-  recipient, or slashable backing; neither is in this version. See the audit.
-- **The weight-based quorum is deleted, not set to zero.** `MIN_PARTICIPANTS`
+  pool, so one ordinary reader can still approve alone while the multiple stays
+  under 2000/n: up to 95 at 21 members, 40 at 50, 20 at 100. At 21 members a
+  1/21 holder clears the bar about 4.8x over.
+
+  The bar is met by the **sum** of all yes votes, not per voter, so members too
+  small to authorise alone can still authorise together. A member at the
+  10,000-sat join floor can approve alone only while the pool is under 1,000,000
+  sats, since the bar is 1% of the pool at a multiple of 20. At a 5,000,000-sat
+  pool the solo threshold is 50,000 sats of weight, five times the join minimum.
+
+  Closing the hole properly needs the bar to cover cumulative payouts per
+  recipient, or weight that can be slashed. Neither is in this version. See the
+  audit.
+- **The weight-based quorum is deleted, not set to zero.** `MIN_VOTERS`
   (1) is the whole participation rule, and `get-params` has no `votingQuorum`
   field at all. A constant left at zero could never be raised later, since the
   contract is immutable and a later version means a new deployment; all it would
   do is imply a turnout floor that does not exist. Turnout is still fully
   recorded per story: `get-story` carries `voterCount`, `yesWeight`, `noWeight`,
-  and `eligibleSnapshot`.
+  and `totalWeightAtOpen`.
 - **The trade this makes.** Quorum was what made a colluding pair expensive. At 0
-  two agents can approve each other's stories, bounded only by `PROPOSE_INTERVAL`
-  (8 stories a day on mainnet) and the 5 bp draw. Still holding them back: a
+  two agents can approve each other's stories, bounded only by `GLOBAL_GLOBAL_PROPOSE_INTERVAL`
+  (8 stories a day on mainnet) and the 5 bp payout. Still holding them back: a
   proposer can never vote on its own story, and a single no vote blocks a single
   yes at the 66% threshold. If collusion ever shows up in practice, raising
-  `BACKING_MULTIPLE` or `MIN_PARTICIPANTS` is the lever, and it means a new
+  `YES_MULTIPLE` or `MIN_VOTERS` is the lever, and it means a new
   deployment.
-- **The floor cannot be lowered.** `MIN_MEMBERS` is a constant with no admin and
+- **The floor cannot be lowered.** `MEMBERS_TO_ACTIVATE` is a constant with no admin and
   no setter. If only 18 agents ever join, no story is ever payable and the pool
   is stranded. This was chosen deliberately over an escape hatch.
 - **Eligibility is checked before membership.** A wallet with no weight proposing
   into a full legion gets `u401`, not `u441`.
 - **Post-conditions**: build every fund-moving tx in **deny** mode with explicit
-  post-conditions. `conclude` moves the snapshotted `draw` from the treasury to
+  post-conditions. `conclude` moves the snapshotted `payout` from the treasury to
   the proposer, readable from `get-story` before you send.
 - **This build is not mainnet-safe.** The stacks-block clock is traded for speed
   and the sBTC principal is testnet. A mainnet deploy must use

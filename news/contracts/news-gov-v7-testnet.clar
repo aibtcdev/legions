@@ -15,12 +15,12 @@
 ;; news-gov-v7
 ;;
 ;; v7 = v6 + a membership floor on proposing. No story may be proposed until
-;; MIN_MEMBERS agents hold voting weight, so the legion is switched on by a real
+;; MEMBERS_TO_ACTIVATE agents hold voting weight, so the legion is switched on by a real
 ;; roster rather than by whoever showed up first. The floor is an ACTIVATION
 ;; gate and not a running requirement: MemberCount only ever climbs, so once it
 ;; is met it stays met and the legion cannot switch itself back off.
 ;;
-;; The weight-based quorum is REMOVED, not set to zero, with MIN_PARTICIPANTS
+;; The weight-based quorum is REMOVED, not set to zero, with MIN_VOTERS
 ;; carrying the rule instead. A payout needs one other agent to read the story
 ;; and vote yes, at any roster size and any weight distribution. Quorum was a
 ;; share of SEATED weight, which counts members who have gone dormant, so it
@@ -28,23 +28,23 @@
 ;; one per 20 members. That is a liveness bar the willing agents cannot clear by
 ;; trying harder, and it gets worse every time someone joins and goes quiet.
 ;;
-;; Removing the turnout floor left approval costing a flat MIN_WEIGHT while the
-;; payout is 5 bp of a pool with no ceiling, so BACKING_MULTIPLE replaces it: the
-;; yes weight must cover 20x the draw, or the story settles "under-backed". That
-;; bar is a share of the money at stake and never of the roster, so it prices a
-;; self-dealer without reintroducing the dormancy problem.
+;; Removing the turnout floor left approval costing a flat MIN_WEIGHT_TO_ACT while the
+;; payout is 5 bp of a pool with no ceiling, so YES_MULTIPLE replaces it:
+;; the yes weight must cover 20x the payout, or the story settles "yes-short".
+;; That bar is a share of the money at stake and never of the roster, so it prices
+;; a self-dealer without reintroducing the dormancy problem.
 ;;
 ;; It prices the attack rather than preventing it, and that is understood rather
-;; than overlooked. Voting weight is never consumed, so backing is bought once
-;; while the draw recurs; K is a payback period, not a wall. What still holds a
+;; than overlooked. Voting weight is never consumed, so the yes weight is bought
+;; once while the payout recurs; the multiple is a payback period, not a wall. What still holds a
 ;; self-dealer back: the proposer may never vote on its own story,
-;; MIN_PARTICIPANTS still requires a distinct voter so silence pays nobody, and
+;; MIN_VOTERS still requires a distinct voter so silence pays nobody, and
 ;; VOTING_THRESHOLD still needs 66% of cast weight, so a single no vote blocks a
-;; single yes. Closing it properly needs backing to cover cumulative payouts per
-;; recipient, or slashable backing, and neither is in this version.
+;; single yes. Closing it properly needs the bar to cover cumulative payouts per
+;; recipient, or weight that can be slashed, and neither is in this version.
 
 ;; Lifecycle windows in burn blocks
-(define-constant VOTING_DELAY u4)
+(define-constant VOTE_DELAY u4)
 (define-constant VOTE_WINDOW u24)
 (define-constant CONCLUDE_WINDOW u12)
 
@@ -57,33 +57,37 @@
 ;; at zero -- the contract is immutable, so a dead constant could never be raised
 ;; later, and would only mislead anyone reading get-params into thinking a
 ;; turnout floor exists.
-(define-constant MIN_PARTICIPANTS u1)
+(define-constant MIN_VOTERS u1)
 
-;; How many times the payout the approving weight must cover. Read it as the
-;; attacker's payback period in stories: backing costs K draws to buy and earns
-;; one draw per story, so K is how long a self-dealer waits before profiting.
-;; Voting weight is never consumed, so no value of K makes extraction impossible;
-;; it only sets the price and the delay.
+;; How many times the payout the yes weight must cover. Not about WHETHER the
+;; story was approved -- VOTING_THRESHOLD settles that -- but whether the agents
+;; approving it were large enough to be releasing that much money. Equivalently:
+;; an agent can approve a payout of up to 5% of the weight it holds.
 ;;
-;; The ceiling is liveness. The bar is K * 5 bp of the pool, and a member of an
+;; Read it as the attacker's payback period in stories: clearing the bar costs 20
+;; payouts' worth of weight to buy and earns one payout per story, so that is how
+;; long a self-dealer waits before profiting. Voting weight is never consumed, so
+;; no multiple makes extraction impossible; it only sets the price and the delay.
+;;
+;; The ceiling is liveness. The bar is 20 * 5 bp of the pool, and a member of an
 ;; n-way legion holds about 1/n of it, so one ordinary reader can still approve
-;; alone while K <= 2000/n: up to 95 at 21 members, 40 at 50, 20 at 100. At u20
+;; alone while the multiple stays under 2000/n: up to 95 at 21 members, 40 at 50, 20 at 100. At u20
 ;; a 1/21 member clears it roughly 4.8x over, and small members can still combine
-;; because backing is the SUM of yes weight, not a per-voter test.
-(define-constant BACKING_MULTIPLE u20)
+;; because the bar is met by the SUM of yes votes, not per voter.
+(define-constant YES_MULTIPLE u20)
 
 ;; Agents holding voting weight before any story may be proposed
-(define-constant MIN_MEMBERS u21)
+(define-constant MEMBERS_TO_ACTIVATE u21)
 
 ;; Global rate limit on proposals
-(define-constant PROPOSE_INTERVAL u1)
+(define-constant GLOBAL_PROPOSE_INTERVAL u1)
 
 ;; Minimum weight to act and minimum sats to join
-(define-constant MIN_WEIGHT u10000)
-(define-constant MIN_CONTRIBUTION u10000)
+(define-constant MIN_WEIGHT_TO_ACT u10000)
+(define-constant MIN_JOIN_SATS u10000)
 
 ;; Payout per approved story in basis points
-(define-constant DRAW_BPS u5)
+(define-constant PAYOUT_BPS u5)
 
 ;; Proposal statuses
 (define-constant STATUS_OPEN u0)
@@ -99,11 +103,11 @@
 (define-constant ERR_VOTE_NOT_STARTED (err u436))
 (define-constant ERR_VOTE_STILL_OPEN (err u408))
 (define-constant ERR_CONCLUDE_WINDOW_PASSED (err u435))
-(define-constant ERR_BELOW_MIN_CONTRIBUTION (err u437))
+(define-constant ERR_BELOW_MIN_JOIN_SATS (err u437))
 (define-constant ERR_PROPOSAL_CONCLUDED (err u410))
 (define-constant ERR_PAYOUT_FAILED (err u417))
 (define-constant ERR_EMPTY_POOL (err u418))
-(define-constant ERR_DUST_DRAW (err u419))
+(define-constant ERR_DUST_PAYOUT (err u419))
 (define-constant ERR_EMPTY_LINK (err u421))
 (define-constant ERR_SELF_VOTE (err u423))
 (define-constant ERR_DUST_CONTRIBUTION (err u426))
@@ -120,7 +124,7 @@
 )
 (define-data-var TotalWeight uint u0)
 
-;; Agents holding at least MIN_WEIGHT, i.e. those who can actually vote.
+;; Agents holding at least MIN_WEIGHT_TO_ACT, i.e. those who can actually vote.
 ;; Weight is only ever added in this contract (there is no unstake or withdraw),
 ;; so a principal crosses the floor once and never falls back below it. That
 ;; makes this counter monotonic and lets it be maintained without a decrement.
@@ -132,8 +136,8 @@
   uint
 )
 
-;; Height at which each bond stops locking
-(define-map BondUnlockAt
+;; Height at which each proposer's lock expires
+(define-map LockedUntil
   principal
   uint
 )
@@ -155,11 +159,11 @@
   uint
   {
     proposer: principal,
-    bond: uint,
-    draw: uint,
+    lockedWeight: uint,
+    payout: uint,
     createdAt: uint,
     voteEnd: uint,
-    eligibleSnapshot: uint,
+    totalWeightAtOpen: uint,
     yesWeight: uint,
     noWeight: uint,
     voterCount: uint,
@@ -200,16 +204,16 @@
 (define-read-only (get-params)
   {
     votingThreshold: VOTING_THRESHOLD,
-    minParticipants: MIN_PARTICIPANTS,
-    minMembers: MIN_MEMBERS,
-    backingMultiple: BACKING_MULTIPLE,
-    minWeight: MIN_WEIGHT,
-    minContribution: MIN_CONTRIBUTION,
-    drawBps: DRAW_BPS,
-    votingDelay: VOTING_DELAY,
+    minVoters: MIN_VOTERS,
+    membersToActivate: MEMBERS_TO_ACTIVATE,
+    yesMultiple: YES_MULTIPLE,
+    minWeightToAct: MIN_WEIGHT_TO_ACT,
+    minJoinSats: MIN_JOIN_SATS,
+    payoutBps: PAYOUT_BPS,
+    voteDelay: VOTE_DELAY,
     voteWindow: VOTE_WINDOW,
     concludeWindow: CONCLUDE_WINDOW,
-    proposeInterval: PROPOSE_INTERVAL,
+    globalProposeInterval: GLOBAL_PROPOSE_INTERVAL,
   }
 )
 
@@ -222,7 +226,7 @@
         "failed"
         (if (is-eq (get status story) STATUS_EXPIRED)
           "expired"
-          (if (< stacks-block-height (+ (get createdAt story) VOTING_DELAY))
+          (if (< stacks-block-height (+ (get createdAt story) VOTE_DELAY))
             "pending"
             (if (< stacks-block-height (get voteEnd story))
               "voting"
@@ -247,28 +251,28 @@
   (var-get TotalWeight)
 )
 
-;; Agents holding at least MIN_WEIGHT
+;; Agents holding at least MIN_WEIGHT_TO_ACT
 (define-read-only (get-member-count)
   (var-get MemberCount)
 )
 
 ;; Whether the legion has enough members for a story to be proposed at all
-(define-read-only (members-met)
-  (>= (var-get MemberCount) MIN_MEMBERS)
+(define-read-only (is-activated)
+  (>= (var-get MemberCount) MEMBERS_TO_ACTIVATE)
 )
 
 (define-read-only (get-last-proposal-id)
   (var-get LastProposalId)
 )
 
-;; Height at which a bond stops locking
-(define-read-only (bond-unlock-at (who principal))
-  (default-to u0 (map-get? BondUnlockAt who))
+;; Height at which a proposer's lock expires
+(define-read-only (get-locked-until (who principal))
+  (default-to u0 (map-get? LockedUntil who))
 )
 
 ;; Weight still locked by a live proposal
-(define-read-only (locked-of (who principal))
-  (if (< stacks-block-height (bond-unlock-at who))
+(define-read-only (get-locked-weight (who principal))
+  (if (< stacks-block-height (get-locked-until who))
     (default-to u0 (map-get? LockedWeight who))
     u0
   )
@@ -278,7 +282,7 @@
 (define-read-only (get-free-weight (who principal))
   (let (
       (held (get-weight who))
-      (locked (locked-of who))
+      (locked (get-locked-weight who))
     )
     (if (> locked held)
       u0
@@ -288,12 +292,12 @@
 )
 
 (define-read-only (has-live-proposal (who principal))
-  (> (locked-of who) u0)
+  (> (get-locked-weight who) u0)
 )
 
 ;; Live proposal id for a principal
 (define-read-only (get-live-proposal (who principal))
-  (if (> (locked-of who) u0)
+  (if (> (get-locked-weight who) u0)
     (map-get? LiveProposal who)
     none
   )
@@ -303,12 +307,12 @@
 (define-read-only (get-next-propose-height)
   (if (is-eq (var-get LastProposeAt) u0)
     u0
-    (+ (var-get LastProposeAt) PROPOSE_INTERVAL)
+    (+ (var-get LastProposeAt) GLOBAL_PROPOSE_INTERVAL)
   )
 )
 
 ;; Open but past its conclude window
-(define-read-only (lapsed-open (status uint) (voteEnd uint))
+(define-read-only (is-lapsed (status uint) (voteEnd uint))
   (and
     (is-eq status STATUS_OPEN)
     (>= stacks-block-height (+ voteEnd CONCLUDE_WINDOW))
@@ -318,7 +322,7 @@
 ;; Get a story
 (define-read-only (get-story (proposalId uint))
   (match (map-get? Stories proposalId)
-    story (some (if (lapsed-open (get status story) (get voteEnd story))
+    story (some (if (is-lapsed (get status story) (get voteEnd story))
       (merge story { status: STATUS_EXPIRED, reason: "not-concluded" })
       story
     ))
@@ -333,7 +337,7 @@
 ;; Get a story status
 (define-read-only (get-story-status (proposalId uint))
   (match (map-get? Stories proposalId)
-    story (some (if (lapsed-open (get status story) (get voteEnd story))
+    story (some (if (is-lapsed (get status story) (get voteEnd story))
       STATUS_EXPIRED
       (get status story)
     ))
@@ -359,7 +363,7 @@
   (match (map-get? Stories proposalId)
     story (some {
       weight: (get-weight who),
-      meetsFloor: (>= (get-weight who) MIN_WEIGHT),
+      meetsFloor: (>= (get-weight who) MIN_WEIGHT_TO_ACT),
       isProposer: (is-eq who (get proposer story)),
     })
     none
@@ -367,8 +371,8 @@
 )
 
 ;; What a story would pay if proposed now
-(define-read-only (quote-draw)
-  (/ (* (contract-call? .news-treasury-v7 get-balance) DRAW_BPS) u10000)
+(define-read-only (quote-payout)
+  (/ (* (contract-call? .news-treasury-v7 get-balance) PAYOUT_BPS) u10000)
 )
 
 ;; Weight a contribution would mint now
@@ -389,14 +393,14 @@
   (let (
       (pool (contract-call? .news-treasury-v7 get-balance))
       (weight (get-weight who))
-      (draw (/ (* pool DRAW_BPS) u10000))
+      (payout (/ (* pool PAYOUT_BPS) u10000))
       (nextHeight (get-next-propose-height))
-      (eligible (>= weight MIN_WEIGHT))
+      (eligible (>= weight MIN_WEIGHT_TO_ACT))
       (slotOpen (>= stacks-block-height nextHeight))
-      (noLive (is-eq (locked-of who) u0))
-      (poolOk (and (> pool u0) (> draw u0)))
+      (noLive (is-eq (get-locked-weight who) u0))
+      (poolOk (and (> pool u0) (> payout u0)))
       (members (var-get MemberCount))
-      (membersOk (>= members MIN_MEMBERS))
+      (membersOk (>= members MEMBERS_TO_ACTIVATE))
     )
     {
       canPropose: (and eligible slotOpen noLive poolOk membersOk),
@@ -406,10 +410,10 @@
       poolOk: poolOk,
       membersOk: membersOk,
       memberCount: members,
-      minMembers: MIN_MEMBERS,
+      membersToActivate: MEMBERS_TO_ACTIVATE,
       nextProposeHeight: nextHeight,
       lockOnPropose: weight,
-      draw: draw,
+      payout: payout,
       freeWeight: (get-free-weight who),
     }
   )
@@ -437,12 +441,12 @@
       ))
       (held (get-weight tx-sender))
       (next (+ held minted))
-      (joins (if (and (< held MIN_WEIGHT) (>= next MIN_WEIGHT))
+      (joins (if (and (< held MIN_WEIGHT_TO_ACT) (>= next MIN_WEIGHT_TO_ACT))
         u1
         u0
       ))
     )
-    (asserts! (>= amount MIN_CONTRIBUTION) ERR_BELOW_MIN_CONTRIBUTION)
+    (asserts! (>= amount MIN_JOIN_SATS) ERR_BELOW_MIN_JOIN_SATS)
     (asserts! (> minted u0) ERR_DUST_CONTRIBUTION)
     (try! (contract-call? .news-treasury-v7 contribute-in amount))
     (map-set Weights tx-sender next)
@@ -471,29 +475,28 @@
   (let (
       (pool (contract-call? .news-treasury-v7 get-balance))
       (proposerWeight (get-weight tx-sender))
-      (eligible (- (var-get TotalWeight) proposerWeight))
-      (voteEnd (+ stacks-block-height VOTING_DELAY VOTE_WINDOW))
+      (voteEnd (+ stacks-block-height VOTE_DELAY VOTE_WINDOW))
       (lapseAt (+ voteEnd CONCLUDE_WINDOW))
-      (draw (/ (* pool DRAW_BPS) u10000))
+      (payout (/ (* pool PAYOUT_BPS) u10000))
       (newId (+ (var-get LastProposalId) u1))
     )
     (asserts! (> (len link) u0) ERR_EMPTY_LINK)
     (asserts! (> (len title) u0) ERR_EMPTY_TITLE)
     (asserts! (> pool u0) ERR_EMPTY_POOL)
-    (asserts! (> draw u0) ERR_DUST_DRAW)
-    (asserts! (is-eq (locked-of tx-sender) u0) ERR_HAS_LIVE_PROPOSAL)
+    (asserts! (> payout u0) ERR_DUST_PAYOUT)
+    (asserts! (is-eq (get-locked-weight tx-sender) u0) ERR_HAS_LIVE_PROPOSAL)
     (asserts!
       (>= stacks-block-height (get-next-propose-height))
       ERR_PROPOSE_TOO_SOON
     )
-    (asserts! (>= proposerWeight MIN_WEIGHT) ERR_INELIGIBLE)
-    (asserts! (>= (var-get MemberCount) MIN_MEMBERS) ERR_TOO_FEW_MEMBERS)
+    (asserts! (>= proposerWeight MIN_WEIGHT_TO_ACT) ERR_INELIGIBLE)
+    (asserts! (>= (var-get MemberCount) MEMBERS_TO_ACTIVATE) ERR_TOO_FEW_MEMBERS)
 
     (var-set LastProposeAt stacks-block-height)
     (var-set LastProposalId newId)
     (map-set LiveProposal tx-sender newId)
     (map-set LockedWeight tx-sender proposerWeight)
-    (map-set BondUnlockAt tx-sender lapseAt)
+    (map-set LockedUntil tx-sender lapseAt)
     (map-set StoryMeta newId {
       title: title,
       description: description,
@@ -501,11 +504,11 @@
     })
     (map-set Stories newId {
       proposer: tx-sender,
-      bond: proposerWeight,
-      draw: draw,
+      lockedWeight: proposerWeight,
+      payout: payout,
       createdAt: stacks-block-height,
       voteEnd: voteEnd,
-      eligibleSnapshot: eligible,
+      totalWeightAtOpen: (var-get TotalWeight),
       yesWeight: u0,
       noWeight: u0,
       voterCount: u0,
@@ -518,10 +521,10 @@
       proposer: tx-sender,
       link: link,
       title: title,
-      bond: proposerWeight,
-      draw: draw,
+      lockedWeight: proposerWeight,
+      payout: payout,
       voteEnd: voteEnd,
-      eligibleSnapshot: eligible,
+      totalWeightAtOpen: (var-get TotalWeight),
     })
     (ok newId)
   )
@@ -538,10 +541,10 @@
       (weight (get-weight tx-sender))
     )
     (asserts! (is-eq (get status story) STATUS_OPEN) ERR_VOTE_CLOSED)
-    (asserts! (>= stacks-block-height (+ (get createdAt story) VOTING_DELAY)) ERR_VOTE_NOT_STARTED)
+    (asserts! (>= stacks-block-height (+ (get createdAt story) VOTE_DELAY)) ERR_VOTE_NOT_STARTED)
     (asserts! (< stacks-block-height (get voteEnd story)) ERR_VOTE_CLOSED)
     (asserts! (> (len rationale) u0) ERR_EMPTY_RATIONALE)
-    (asserts! (>= weight MIN_WEIGHT) ERR_INELIGIBLE)
+    (asserts! (>= weight MIN_WEIGHT_TO_ACT) ERR_INELIGIBLE)
     (asserts! (not (is-eq tx-sender (get proposer story))) ERR_SELF_VOTE)
     (asserts!
       (is-none (map-get? Votes {
@@ -587,27 +590,23 @@
   (let (
       (story (unwrap! (map-get? Stories proposalId) ERR_NO_PROPOSAL))
       (proposer (get proposer story))
-      (eligible (get eligibleSnapshot story))
       (cast (+ (get yesWeight story) (get noWeight story)))
-      ;; No weight test here. `eligible > u0` only rules out a legion where the
-      ;; proposer holds every last unit of weight, in which case nobody else can
-      ;; vote and the headcount below could never be met anyway.
-      (participationMet (and
-        (> eligible u0)
-        (>= (get voterCount story) MIN_PARTICIPANTS)
-      ))
+      ;; Just the headcount. A weight test here would be unreachable: nothing can
+      ;; be proposed until MEMBERS_TO_ACTIVATE principals each hold MIN_WEIGHT_TO_ACT_TO_ACT,
+      ;; so weight always exists outside the proposer.
+      (participationMet (>= (get voterCount story) MIN_VOTERS))
       (thresholdMet (and
         (> cast u0)
         (>= (/ (* (get yesWeight story) u100) cast) VOTING_THRESHOLD)
       ))
-      ;; The weight approving a payout must cover BACKING_MULTIPLE times the
+      ;; The weight approving a payout must cover YES_MULTIPLE times the
       ;; payout. With no turnout floor, this is what stops a floor-stake wallet
-      ;; authorising a draw from a pool of any size: the bar tracks the money at
+      ;; authorising a payout from a pool of any size: the bar tracks the money at
       ;; stake rather than the roster, so it is immune to dormant members while
       ;; still costing an attacker real capital.
-      (backingMet (>= (get yesWeight story) (* (get draw story) BACKING_MULTIPLE)))
-      (draw (get draw story))
-      (poolShort (> draw (contract-call? .news-treasury-v7 get-balance)))
+      (yesMet (>= (get yesWeight story) (* (get payout story) YES_MULTIPLE)))
+      (payout (get payout story))
+      (poolShort (> payout (contract-call? .news-treasury-v7 get-balance)))
     )
     (asserts! (is-eq (get status story) STATUS_OPEN) ERR_PROPOSAL_CONCLUDED)
     (asserts! (>= stacks-block-height (get voteEnd story)) ERR_VOTE_STILL_OPEN)
@@ -629,7 +628,8 @@
           (merge story { status: STATUS_FAILED, reason: "no-voters" }))
         (print {
           event: "conclude", proposalId: proposalId, outcome: "failed",
-          reason: "no-voters", cast: cast, eligible: eligible,
+          reason: "no-voters", cast: cast,
+          totalWeightAtOpen: (get totalWeightAtOpen story),
           voterCount: (get voterCount story),
         })
         (ok STATUS_FAILED)
@@ -645,16 +645,16 @@
           })
           (ok STATUS_FAILED)
         )
-        (if (not backingMet)
+        (if (not yesMet)
           (begin
             ;; Distinct from "voted-down": the story was not rejected, it was
-            ;; approved by too little weight to be worth this much money.
+            ;; approved by agents too small to authorise this much money.
             (map-set Stories proposalId
-              (merge story { status: STATUS_FAILED, reason: "under-backed" }))
+              (merge story { status: STATUS_FAILED, reason: "yes-short" }))
             (print {
               event: "conclude", proposalId: proposalId, outcome: "failed",
-              reason: "under-backed", yesWeight: (get yesWeight story),
-              draw: draw, required: (* draw BACKING_MULTIPLE),
+              reason: "yes-short", yesWeight: (get yesWeight story),
+              payout: payout, required: (* payout YES_MULTIPLE),
             })
             (ok STATUS_FAILED)
           )
@@ -664,22 +664,22 @@
               (merge story { status: STATUS_FAILED, reason: "pool-short" }))
             (print {
               event: "conclude", proposalId: proposalId, outcome: "failed",
-              reason: "pool-short", draw: draw,
+              reason: "pool-short", payout: payout,
             })
             (ok STATUS_FAILED)
           )
           (begin
-            (asserts! (> draw u0) ERR_DUST_DRAW)
+            (asserts! (> payout u0) ERR_DUST_PAYOUT)
             (map-set Stories proposalId
               (merge story { status: STATUS_PASSED, reason: "paid" }))
             (unwrap!
               (contract-call? .news-treasury-v7 execute-payout
-                proposer draw (payout-ref proposalId proposer))
+                proposer payout (payout-ref proposalId proposer))
               ERR_PAYOUT_FAILED
             )
             (print {
               event: "conclude", proposalId: proposalId, outcome: "passed",
-              draw: draw, recipient: proposer,
+              payout: payout, recipient: proposer,
               yesWeight: (get yesWeight story), noWeight: (get noWeight story),
             })
             (ok STATUS_PASSED)

@@ -3,8 +3,8 @@ import { Cl } from "@stacks/transactions";
 
 // `simnet` is injected globally by vitest-environment-clarinet.
 //
-// v7 = v6 + a membership floor on proposing (MIN_MEMBERS 21), the weight-based
-// quorum removed, and a backing rule in its place. Everything else is v6 and is
+// v7 = v6 + a membership floor on proposing (MEMBERS_TO_ACTIVATE 21), the weight-based
+// quorum removed, and a yes-weight rule in its place. Everything else is v6 and is
 // already covered by news-v6.test.ts, so
 // this suite exercises the floor, the counter behind it, and what a payout
 // requires now that turnout is a headcount. Timing still counts BURN blocks
@@ -23,17 +23,18 @@ const govPrincipal = `${deployer}.${GOV}`;
 const SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
 
 // Must match news-gov-v7.clar (burn blocks).
-const VOTING_DELAY = 2;
+const VOTE_DELAY = 2;
 const VOTE_WINDOW = 30;
 const CONCLUDE_WINDOW = 12;
-const MIN_WEIGHT = 10_000;
-const MIN_CONTRIBUTION = 10_000;
-const PROPOSE_INTERVAL = 18;
-const MIN_MEMBERS = 21;
+const MIN_WEIGHT_TO_ACT = 10_000;
+const MIN_JOIN_SATS = 10_000;
+const GLOBAL_PROPOSE_INTERVAL = 18;
+const MEMBERS_TO_ACTIVATE = 21;
 // No turnout floor by weight at all. This headcount is the participation rule.
-const MIN_PARTICIPANTS = 1;
-// Yes weight must cover this many times the draw, or the story is under-backed.
-const BACKING_MULTIPLE = 20;
+const MIN_VOTERS = 1;
+// Yes weight must cover this many times the payout, else the approvers lacked the
+// weight to release it and the story is yes-short.
+const YES_MULTIPLE = 20;
 
 // Statuses.
 const PASSED = 1n;
@@ -42,15 +43,15 @@ const FAILED = 2n;
 // Errors.
 const ERR_INELIGIBLE = 401n;
 const ERR_CONCLUDE_WINDOW_PASSED = 435n;
-const ERR_BELOW_MIN_CONTRIBUTION = 437n;
+const ERR_BELOW_MIN_JOIN_SATS = 437n;
 const ERR_TOO_FEW_MEMBERS = 441n;
 
 // Every member contributes the same, so weight is uniform and the quorum
 // arithmetic below is exact rather than approximate.
-//   21 members -> pool 210,000,000, draw = 0.05% (5 bp) = 105,000
+//   21 members -> pool 210,000,000, payout = 0.05% (5 bp) = 105,000
 const CONTRIB = 10_000_000;
-const POOL_AT_21 = MIN_MEMBERS * CONTRIB;
-const DRAW_AT_21 = (POOL_AT_21 * 5) / 10_000;
+const POOL_AT_21 = MEMBERS_TO_ACTIVATE * CONTRIB;
+const PAYOUT_AT_21 = (POOL_AT_21 * 5) / 10_000;
 
 // 25 deterministic testnet principals. simnet accepts any valid c32 address as a
 // sender, so the 21-member floor needs no Devnet.toml accounts: these are funded
@@ -133,7 +134,7 @@ function memberCount(): bigint {
 }
 
 function membersMet(): boolean {
-  return dump("members-met") === "true";
+  return dump("is-activated") === "true";
 }
 
 function weightOf(who: string): bigint {
@@ -146,7 +147,7 @@ function freeWeightOf(who: string): bigint {
 }
 
 function lockedOf(who: string): bigint {
-  return BigInt(dump("locked-of", [Cl.principal(who)]).replace("u", ""));
+  return BigInt(dump("get-locked-weight", [Cl.principal(who)]).replace("u", ""));
 }
 
 function totalWeight(): bigint {
@@ -197,17 +198,17 @@ function storyReason(id: number): string {
 }
 
 function mineToVotingOpen() {
-  simnet.mineEmptyBurnBlocks(VOTING_DELAY);
+  simnet.mineEmptyBurnBlocks(VOTE_DELAY);
 }
 
 function mineToConcludable() {
-  simnet.mineEmptyBurnBlocks(VOTING_DELAY + VOTE_WINDOW);
+  simnet.mineEmptyBurnBlocks(VOTE_DELAY + VOTE_WINDOW);
 }
 
 /** From a fresh propose: burn past the conclude window, so the story expires
  *  and the bond frees itself with no transaction. */
 function mineToLapsed() {
-  simnet.mineEmptyBurnBlocks(VOTING_DELAY + VOTE_WINDOW + CONCLUDE_WINDOW);
+  simnet.mineEmptyBurnBlocks(VOTE_DELAY + VOTE_WINDOW + CONCLUDE_WINDOW);
 }
 
 /** Wire the treasury and seat `n` equal-weight members. */
@@ -223,17 +224,17 @@ function legionOf(n: number) {
 describe("v7 parameters", () => {
   it("publishes the membership floor and the quorum that goes with it", () => {
     const p = dump("get-params");
-    expect(num(p, "minMembers")).toBe(BigInt(MIN_MEMBERS));
-    expect(num(p, "backingMultiple")).toBe(BigInt(BACKING_MULTIPLE));
+    expect(num(p, "membersToActivate")).toBe(BigInt(MEMBERS_TO_ACTIVATE));
+    expect(num(p, "yesMultiple")).toBe(BigInt(YES_MULTIPLE));
     // The weight-based quorum is gone, not reported as zero.
     expect(p).not.toContain("votingQuorum");
     // Everything else is v6's, unchanged.
     expect(num(p, "votingThreshold")).toBe(66n);
-    expect(num(p, "minParticipants")).toBe(BigInt(MIN_PARTICIPANTS));
-    expect(num(p, "minWeight")).toBe(BigInt(MIN_WEIGHT));
-    expect(num(p, "minContribution")).toBe(BigInt(MIN_CONTRIBUTION));
-    expect(num(p, "drawBps")).toBe(5n);
-    expect(num(p, "proposeInterval")).toBe(BigInt(PROPOSE_INTERVAL));
+    expect(num(p, "minVoters")).toBe(BigInt(MIN_VOTERS));
+    expect(num(p, "minWeightToAct")).toBe(BigInt(MIN_WEIGHT_TO_ACT));
+    expect(num(p, "minJoinSats")).toBe(BigInt(MIN_JOIN_SATS));
+    expect(num(p, "payoutBps")).toBe(5n);
+    expect(num(p, "globalProposeInterval")).toBe(BigInt(GLOBAL_PROPOSE_INTERVAL));
   });
 
   it("starts with no members", () => {
@@ -261,8 +262,8 @@ describe("membership accounting", () => {
   });
 
   it("counts each distinct contributor exactly once", () => {
-    legionOf(MIN_MEMBERS);
-    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    legionOf(MEMBERS_TO_ACTIVATE);
+    expect(memberCount()).toBe(BigInt(MEMBERS_TO_ACTIVATE));
     expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21));
   });
 
@@ -270,17 +271,17 @@ describe("membership accounting", () => {
     wire();
     faucet(proposer);
     expect(
-      simnet.callPublicFn(GOV, "contribute", [Cl.uint(MIN_CONTRIBUTION - 1)], proposer)
+      simnet.callPublicFn(GOV, "contribute", [Cl.uint(MIN_JOIN_SATS - 1)], proposer)
         .result,
-    ).toBeErr(Cl.uint(ERR_BELOW_MIN_CONTRIBUTION));
+    ).toBeErr(Cl.uint(ERR_BELOW_MIN_JOIN_SATS));
     expect(memberCount()).toBe(0n);
   });
 
   it("flips members-met on the 21st member and not before", () => {
-    legionOf(MIN_MEMBERS - 1);
+    legionOf(MEMBERS_TO_ACTIVATE - 1);
     expect(memberCount()).toBe(20n);
     expect(membersMet()).toBe(false);
-    contribute(MEMBERS[MIN_MEMBERS - 1]);
+    contribute(MEMBERS[MEMBERS_TO_ACTIVATE - 1]);
     expect(memberCount()).toBe(21n);
     expect(membersMet()).toBe(true);
   });
@@ -288,22 +289,22 @@ describe("membership accounting", () => {
 
 describe("the 21-member floor on proposing", () => {
   it("refuses a story at 20 members", () => {
-    legionOf(MIN_MEMBERS - 1);
+    legionOf(MEMBERS_TO_ACTIVATE - 1);
     expect(propose().result).toBeErr(Cl.uint(ERR_TOO_FEW_MEMBERS));
   });
 
   it("accepts the first story at exactly 21", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
   });
 
   it("says why through propose-status before the floor is met", () => {
-    legionOf(MIN_MEMBERS - 1);
+    legionOf(MEMBERS_TO_ACTIVATE - 1);
     const s = dump("propose-status", [Cl.principal(proposer)]);
     expect(s).toContain("membersOk: false");
     expect(s).toContain("canPropose: false");
     expect(num(s, "memberCount")).toBe(20n);
-    expect(num(s, "minMembers")).toBe(BigInt(MIN_MEMBERS));
+    expect(num(s, "membersToActivate")).toBe(BigInt(MEMBERS_TO_ACTIVATE));
     // The floor is the ONLY thing blocking this proposer.
     expect(s).toContain("eligible: true");
     expect(s).toContain("slotOpen: true");
@@ -312,15 +313,15 @@ describe("the 21-member floor on proposing", () => {
   });
 
   it("clears propose-status once the floor is met", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     const s = dump("propose-status", [Cl.principal(proposer)]);
     expect(s).toContain("membersOk: true");
     expect(s).toContain("canPropose: true");
-    expect(num(s, "memberCount")).toBe(BigInt(MIN_MEMBERS));
+    expect(num(s, "memberCount")).toBe(BigInt(MEMBERS_TO_ACTIVATE));
   });
 
   it("still checks the proposer's own weight first", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     // A full legion, but this principal holds nothing: ineligible, not too-few.
     expect(propose(stranger).result).toBeErr(Cl.uint(ERR_INELIGIBLE));
   });
@@ -328,7 +329,7 @@ describe("the 21-member floor on proposing", () => {
 
 describe("one reader is enough", () => {
   it("pays on a single yes vote", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
@@ -339,30 +340,32 @@ describe("one reader is enough", () => {
 
     expect(storyStatus(1)).toBe(PASSED);
     expect(storyReason(1)).toBe("paid");
-    expect(sbtcOf(proposer) - paidBefore).toBe(BigInt(DRAW_AT_21));
-    expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21 - DRAW_AT_21));
+    expect(sbtcOf(proposer) - paidBefore).toBe(BigInt(PAYOUT_AT_21));
+    expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21 - PAYOUT_AT_21));
   });
 
   it("pays on a vote worth far less than the old 5% floor", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
 
     const story = dump("get-story", [Cl.uint(1)]);
-    const eligible = num(story, "eligibleSnapshot");
+    // The story records the WHOLE legion's weight at open, proposer included.
+    // It is reporting only: nothing in conclude reads it, now that turnout is
+    // a headcount rather than a share.
+    expect(num(story, "totalWeightAtOpen")).toBe(BigInt(POOL_AT_21));
     const cast = num(story, "yesWeight") + num(story, "noWeight");
-    // The proposer's own weight is excluded from the denominator.
-    expect(eligible).toBe(BigInt(POOL_AT_21 - CONTRIB));
-    // 5% of eligible, which used to be the exact line. Nothing reads it now.
-    expect((cast * 100n) / eligible).toBe(5n);
+    // Under the old 10% quorum this vote was 5% of the non-proposer weight and
+    // would have failed. Nothing measures that ratio any more.
+    expect((cast * 100n) / BigInt(POOL_AT_21 - CONTRIB)).toBe(5n);
 
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
-  it("still pays nobody on silence, which is MIN_PARTICIPANTS doing the work", () => {
-    legionOf(MIN_MEMBERS);
+  it("still pays nobody on silence, which is MIN_VOTERS doing the work", () => {
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToConcludable();
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
@@ -372,7 +375,7 @@ describe("one reader is enough", () => {
   });
 
   it("still fails the 66% threshold on a lone no vote", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, false).result).toBeOk(Cl.bool(true));
@@ -394,19 +397,19 @@ describe("the member count can only ever climb", () => {
   // is untouched and only `LockedWeight` moves.
 
   it("locks the proposer's whole weight without spending any of it", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
 
     // Nothing usable left, yet nothing lost, and the legion is still seated.
     expect(freeWeightOf(proposer)).toBe(0n);
     expect(lockedOf(proposer)).toBe(BigInt(CONTRIB));
     expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
-    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(memberCount()).toBe(BigInt(MEMBERS_TO_ACTIVATE));
     expect(membersMet()).toBe(true);
   });
 
   it("holds the count across a story that passes and pays", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     const totalBefore = totalWeight();
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
@@ -415,7 +418,7 @@ describe("the member count can only ever climb", () => {
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
 
     // Getting paid moves sBTC, never voting rights.
-    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(memberCount()).toBe(BigInt(MEMBERS_TO_ACTIVATE));
     expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
     expect(freeWeightOf(proposer)).toBe(BigInt(CONTRIB));
     expect(lockedOf(proposer)).toBe(0n);
@@ -423,14 +426,14 @@ describe("the member count can only ever climb", () => {
   });
 
   it("holds the count across a story that expires with no transaction", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     const totalBefore = totalWeight();
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToLapsed();
 
     // Nobody called anything. The hold released itself on the deadline.
     expect(conclude(1).result).toBeErr(Cl.uint(ERR_CONCLUDE_WINDOW_PASSED));
-    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(memberCount()).toBe(BigInt(MEMBERS_TO_ACTIVATE));
     expect(weightOf(proposer)).toBe(BigInt(CONTRIB));
     expect(freeWeightOf(proposer)).toBe(BigInt(CONTRIB));
     expect(lockedOf(proposer)).toBe(0n);
@@ -438,10 +441,10 @@ describe("the member count can only ever climb", () => {
   });
 
   it("keeps a locked proposer voting at full strength on someone else's story", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose(proposer).result).toBeOk(Cl.uint(1));
     // A second agent opens its own story once the global slot reopens.
-    simnet.mineEmptyBurnBlocks(PROPOSE_INTERVAL);
+    simnet.mineEmptyBurnBlocks(GLOBAL_PROPOSE_INTERVAL);
     expect(propose(voter1).result).toBeOk(Cl.uint(2));
     mineToVotingOpen();
 
@@ -452,7 +455,7 @@ describe("the member count can only ever climb", () => {
   });
 
   it("never lets a legion that switched on switch back off", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(membersMet()).toBe(true);
 
     // Everything that could plausibly take weight away, one after another.
@@ -461,33 +464,33 @@ describe("the member count can only ever climb", () => {
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
-    simnet.mineEmptyBurnBlocks(PROPOSE_INTERVAL);
+    simnet.mineEmptyBurnBlocks(GLOBAL_PROPOSE_INTERVAL);
     expect(propose(voter1).result).toBeOk(Cl.uint(2));
     mineToLapsed();
 
-    expect(memberCount()).toBe(BigInt(MIN_MEMBERS));
+    expect(memberCount()).toBe(BigInt(MEMBERS_TO_ACTIVATE));
     expect(membersMet()).toBe(true);
     // And the gate stays open for the next story.
     expect(dump("propose-status", [Cl.principal(voter2)])).toContain("membersOk: true");
   });
 });
 
-describe("approving weight must cover the payout", () => {
+describe("yes weight must cover the payout", () => {
   // With no turnout floor, this is what stops a floor-stake wallet authorising a
-  // draw from a pool of any size. The bar is the draw itself, so it tracks the
+  // payout from a pool of any size. The bar is the payout itself, so it tracks the
   // money at stake and never the roster.
   //
   // KNOWN LIMIT, measured not assumed: this prices the attack, it does not
-  // prevent it. Backing weight is bought once and approval power never depletes,
-  // while the draw recurs, so an attacker holding just over one draw breaks even
+  // prevent it. The weight is bought once and never depletes,
+  // while the payout recurs, so an attacker holding just over one payout breaks even
   // after roughly two stories. Raising the multiple raises the payback period in
   // proportion. See the audit for the numbers.
 
-  it("rejects a payout approved by less weight than it pays out", () => {
-    legionOf(MIN_MEMBERS);
-    // A 22nd member at the floor: eligible to vote, far below the 105,000 draw.
-    const small = MEMBERS[MIN_MEMBERS];
-    expect(contribute(small, MIN_CONTRIBUTION)).toBeOk(Cl.uint(MIN_CONTRIBUTION));
+  it("rejects a payout approved by agents too small to release it", () => {
+    legionOf(MEMBERS_TO_ACTIVATE);
+    // A 22nd member at the floor: eligible to vote, far below the 105,000 payout.
+    const small = MEMBERS[MEMBERS_TO_ACTIVATE];
+    expect(contribute(small, MIN_JOIN_SATS)).toBeOk(Cl.uint(MIN_JOIN_SATS));
 
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
@@ -495,51 +498,51 @@ describe("approving weight must cover the payout", () => {
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
 
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
-    expect(storyReason(1)).toBe("under-backed");
+    expect(storyReason(1)).toBe("yes-short");
     // Nothing left the pool.
-    expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21 + MIN_CONTRIBUTION));
+    expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21 + MIN_JOIN_SATS));
   });
 
-  it("reports under-backed distinctly from voted-down", () => {
-    legionOf(MIN_MEMBERS);
-    const small = MEMBERS[MIN_MEMBERS];
-    contribute(small, MIN_CONTRIBUTION);
+  it("reports yes-short distinctly from voted-down", () => {
+    legionOf(MEMBERS_TO_ACTIVATE);
+    const small = MEMBERS[MEMBERS_TO_ACTIVATE];
+    contribute(small, MIN_JOIN_SATS);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(small, 1, true).result).toBeOk(Cl.bool(true));
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     conclude(1);
-    // Unanimous support, so it was not voted down. It was under-backed.
+    // Unanimous support, so it was not voted down. The approvers were too small.
     const story = dump("get-story", [Cl.uint(1)]);
     expect(num(story, "noWeight")).toBe(0n);
-    expect(num(story, "yesWeight")).toBe(BigInt(MIN_CONTRIBUTION));
-    expect(storyReason(1)).toBe("under-backed");
+    expect(num(story, "yesWeight")).toBe(BigInt(MIN_JOIN_SATS));
+    expect(storyReason(1)).toBe("yes-short");
   });
 
   it("lets one ordinary member clear the bar with room to spare", () => {
-    legionOf(MIN_MEMBERS);
+    legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
 
     const story = dump("get-story", [Cl.uint(1)]);
-    const backing = num(story, "yesWeight");
-    const bar = num(story, "draw") * BigInt(BACKING_MULTIPLE);
-    expect(backing).toBeGreaterThanOrEqual(bar);
-    // A 1/21 member clears the K=20 bar about 4.8x over, which is the liveness
+    const yesWeight = num(story, "yesWeight");
+    const bar = num(story, "payout") * BigInt(YES_MULTIPLE);
+    expect(yesWeight).toBeGreaterThanOrEqual(bar);
+    // A 1/21 member has about 4.8x the weight needed, which is the liveness
     // headroom the multiple was chosen for.
-    expect(backing / bar).toBeGreaterThanOrEqual(4n);
+    expect(yesWeight / bar).toBeGreaterThanOrEqual(4n);
 
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
-  it("adds small voters together to clear the bar", () => {
-    legionOf(MIN_MEMBERS);
-    // Backing is the SUM of yes weight, not a per-voter test, so members too
+  it("adds small voters together to reach the weight needed", () => {
+    legionOf(MEMBERS_TO_ACTIVATE);
+    // The bar is met by the SUM of yes votes, not per voter, so members too
     // small to authorise a payout alone can still authorise one together.
-    const a = MEMBERS[MIN_MEMBERS];
-    const b = MEMBERS[MIN_MEMBERS + 1];
+    const a = MEMBERS[MEMBERS_TO_ACTIVATE];
+    const b = MEMBERS[MEMBERS_TO_ACTIVATE + 1];
     contribute(a, 1_200_000);
     contribute(b, 1_200_000);
 
@@ -553,9 +556,9 @@ describe("approving weight must cover the payout", () => {
   });
 
   it("refuses that same pair when only one of them votes", () => {
-    legionOf(MIN_MEMBERS);
-    const a = MEMBERS[MIN_MEMBERS];
-    const b = MEMBERS[MIN_MEMBERS + 1];
+    legionOf(MEMBERS_TO_ACTIVATE);
+    const a = MEMBERS[MEMBERS_TO_ACTIVATE];
+    const b = MEMBERS[MEMBERS_TO_ACTIVATE + 1];
     contribute(a, 1_200_000);
     contribute(b, 1_200_000);
 
@@ -565,7 +568,7 @@ describe("approving weight must cover the payout", () => {
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     // 1,200,000 alone is under the ~2,124,000 bar.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
-    expect(storyReason(1)).toBe("under-backed");
+    expect(storyReason(1)).toBe("yes-short");
   });
 });
 
@@ -578,7 +581,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
   // Each case below is annotated with what the old 5% quorum would have done.
 
   it("pays on one reader at 22 members, where 5% needed two", () => {
-    legionOf(MIN_MEMBERS + 1);
+    legionOf(MEMBERS_TO_ACTIVATE + 1);
     expect(memberCount()).toBe(22n);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
@@ -601,8 +604,8 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
   it("pays on one small reader while a dormant whale holds most of the weight", () => {
     // The case a weight-share quorum handles worst: someone joins big, never
     // votes again, and drags every future turnout percentage down with them.
-    legionOf(MIN_MEMBERS);
-    const whale = MEMBERS[MIN_MEMBERS];
+    legionOf(MEMBERS_TO_ACTIVATE);
+    const whale = MEMBERS[MEMBERS_TO_ACTIVATE];
     expect(contribute(whale, 20 * CONTRIB)).toBeOk(Cl.uint(20 * CONTRIB));
     expect(memberCount()).toBe(22n);
 
@@ -614,7 +617,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
     const story = dump("get-story", [Cl.uint(1)]);
     const cast = num(story, "yesWeight");
     // 10M of 400M eligible = 2%, less than half the old floor.
-    expect((cast * 100n) / num(story, "eligibleSnapshot")).toBe(2n);
+    expect((cast * 100n) / num(story, "totalWeightAtOpen")).toBe(2n);
 
     simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));

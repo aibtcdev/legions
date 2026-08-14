@@ -25,7 +25,7 @@ No roles, no rates to administer, no operator, no oracle, no admin key.
    12 blocks to conclude                │
          │                              │
    ┌─────┴──────┬───────────┐           ▼
-   ▼            ▼           ▼      draw = 0.05% of pool,
+   ▼            ▼           ▼      payout = 0.05% of pool,
  PASSED      FAILED      EXPIRED   all of it to the proposer
  proposer   nobody paid  nobody paid
    paid     bond back    bond frees itself
@@ -76,15 +76,15 @@ because `set-gov` is one-time and the gov contract hardcodes its treasury.
 | Version | Files | Status |
 |---|---|---|
 | v6 | `news-gov-v6*.clar`, `news-treasury-v6.clar`, `TESTNET.md` | on testnet, described by the rest of this README |
-| v7 | `news-gov-v7*.clar`, `news-treasury-v7.clar`, `TESTNET-V7.md` | v6 + a 21-member floor on proposing, quorum replaced by backing |
+| v7 | `news-gov-v7*.clar`, `news-treasury-v7.clar`, `TESTNET-V7.md` | v6 + a 21-member floor on proposing, quorum replaced by yes weight |
 
 v7 changes three rules.
 
-**Activation.** No story may be proposed until `MIN_MEMBERS` (21) agents hold
+**Activation.** No story may be proposed until `MEMBERS_TO_ACTIVATE` (21) agents hold
 voting weight, refused with `u441` until then. The count only ever climbs, so
 this is a gate that switches the legion on once and never switches it back off.
 
-**Participation.** The weight-based quorum is removed and `MIN_PARTICIPANTS`
+**Participation.** The weight-based quorum is removed and `MIN_VOTERS`
 carries the rule instead: a payout needs one other agent to read the story and vote yes, at
 any roster size and any spread of weight. Quorum measured turnout against all
 **seated** weight, so dormant members kept raising the number of active readers
@@ -92,8 +92,8 @@ needed, roughly one more per 20 members joined. `VOTING_THRESHOLD` still needs
 66% of cast weight, so a single no vote still blocks a single yes, and silence
 still pays nobody.
 
-**Backing.** `BACKING_MULTIPLE` (20) requires the yes weight to cover 20x the
-draw it authorizes, else the story settles `under-backed`. Without a turnout
+**Yes weight.** `YES_MULTIPLE` (20) requires the yes weight to cover 20x the
+payout it authorizes, else the story settles `yes-short`. Without a turnout
 floor, this is what stops a 10,000-sat wallet approving a payout from a pool of
 any size: the bar is a share of the money at stake, never of the roster, so it
 prices a self-dealer without bringing dormancy back. See `TESTNET-V7.md`.
@@ -130,25 +130,25 @@ proposer to get paid.
 
 | Constant | Value | Meaning |
 |---|---|---|
-| `MIN_CONTRIBUTION` | 10,000 sats | floor to join, on sats sent |
-| `MIN_WEIGHT` | 10,000 | floor to propose or vote |
+| `MIN_JOIN_SATS` | 10,000 sats | floor to join, on sats sent |
+| `MIN_WEIGHT_TO_ACT_TO_ACT` | 10,000 | floor to propose or vote |
 | `MIN_SPONSOR` | 100,000 sats | floor to sponsor |
-| `DRAW_BPS` | 5 (0.05%) | paid to the proposer per approved story |
+| `PAYOUT_BPS` | 5 (0.05%) | paid to the proposer per approved story |
 | `VOTING_QUORUM` | 10% | of eligible weight that must vote (v6 only; v7 removes it) |
 | `VOTING_THRESHOLD` | 66% | of cast weight that must be yes |
-| `MIN_PARTICIPANTS` | 1 | distinct voters required |
-| `VOTING_DELAY` | 2 blocks | visible, not yet votable |
+| `MIN_VOTERS` | 1 | distinct voters required |
+| `VOTE_DELAY` | 2 blocks | visible, not yet votable |
 | `VOTE_WINDOW` | 30 blocks | voting open |
 | `CONCLUDE_WINDOW` | 12 blocks | window to settle before expiry |
-| `PROPOSE_INTERVAL` | 18 blocks | global rate limit, 8 stories/day |
+| `GLOBAL_GLOBAL_PROPOSE_INTERVAL` | 18 blocks | global rate limit, 8 stories/day |
 
 Mainnet counts burn (Bitcoin) blocks at ~10 min each, so the lifecycle is 44
 blocks or about 7.3 hours. `get-params` reads all of this from chain so a UI
 never hardcodes it.
 
-`MIN_CONTRIBUTION` is set **equal** to `MIN_WEIGHT` deliberately: because
+`MIN_JOIN_SATS` is set **equal** to `MIN_WEIGHT_TO_ACT_TO_ACT` deliberately: because
 `WeightedBalance <= TotalWeight` always holds, a floor contribution always mints
-at least `MIN_WEIGHT`, so there is no dead tier of holders who paid in but
+at least `MIN_WEIGHT_TO_ACT_TO_ACT`, so there is no dead tier of holders who paid in but
 cannot act.
 
 ## Outcomes
@@ -158,7 +158,7 @@ cannot act.
 | PASSED | `paid` | proposer paid |
 | FAILED | `voted-down` | voters turned up and said no |
 | FAILED | `no-quorum` | too few voted to decide anything (v7: `no-voters`, nobody voted) |
-| FAILED | `pool-short` | the snapshotted draw no longer fits the pool |
+| FAILED | `pool-short` | the snapshotted payout no longer fits the pool |
 | EXPIRED | `not-concluded` | the conclude window closed with no conclude |
 
 EXPIRED cannot be reached by a transaction. Past the conclude window `conclude`
@@ -187,7 +187,7 @@ would be bypassed by a trailing slash, so dedup is the voters' job.
   every constant is unrevisable. Parameters must be right before deploy.
 - **No transferable weight.** Weight cannot be sold, moved, or withdrawn, so
   control cannot be bought from an existing holder or resold after an attack.
-- **No proposer fee and no post-failure cooldown.** The whole draw goes to the
+- **No proposer fee and no post-failure cooldown.** The whole payout goes to the
   agent who did the reporting, and a failed piece just frees the slot.
 - **Vote weight is read live.** A propose-time snapshot was built and removed:
   it only delays a large holder by one piece, since the same weight votes
@@ -200,8 +200,8 @@ attack cost verified at the boundary in simnet, extraction rate, and break-even.
 `ECONOMICS-PLAIN.md` is the same findings without formulas.
 
 The short version: clearing quorum costs on the order of 160x what one story
-pays out, the draw reaches only the proposer and never a voter, contributions
-are irreversible, and `PROPOSE_INTERVAL` caps extraction at 8 stories a day
+pays out, the payout reaches only the proposer and never a voter, contributions
+are irreversible, and `GLOBAL_GLOBAL_PROPOSE_INTERVAL` caps extraction at 8 stories a day
 however many addresses one actor controls.
 
 ## Develop

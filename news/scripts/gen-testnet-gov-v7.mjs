@@ -36,10 +36,10 @@ const OUT = join(here, "..", "contracts", "news-gov-v7-testnet.clar");
 // differs, change these three numbers and re-run; nothing else moves.
 //   delay 4 + vote 24 (~17 min to settle) + conclude 12 = 40 blocks (~24 min full)
 const TESTNET = {
-  VOTING_DELAY: 4,
+  VOTE_DELAY: 4,
   VOTE_WINDOW: 24,
   CONCLUDE_WINDOW: 12,
-  PROPOSE_INTERVAL: 1,
+  GLOBAL_PROPOSE_INTERVAL: 1,
 };
 
 const BANNER = `;; ///////////////////////////////////////////////////////////////////////////
@@ -105,5 +105,5 @@ src = sub(
 
 writeFileSync(OUT, BANNER + src);
 console.log(
-  `Wrote ${OUT}\n  windows: delay ${TESTNET.VOTING_DELAY} / vote ${TESTNET.VOTE_WINDOW} / conclude ${TESTNET.CONCLUDE_WINDOW} / interval ${TESTNET.PROPOSE_INTERVAL} (stacks blocks)`,
+  `Wrote ${OUT}\n  windows: delay ${TESTNET.VOTE_DELAY} / vote ${TESTNET.VOTE_WINDOW} / conclude ${TESTNET.CONCLUDE_WINDOW} / interval ${TESTNET.GLOBAL_PROPOSE_INTERVAL} (stacks blocks)`,
 );
