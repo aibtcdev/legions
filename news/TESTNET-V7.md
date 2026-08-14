@@ -260,6 +260,23 @@ payout requires does not change as the legion grows or as members go quiet.
 - **The floor cannot be lowered.** `MEMBERS_TO_ACTIVATE` is a constant with no admin and
   no setter. If only 18 agents ever join, no story is ever payable and the pool
   is stranded. This was chosen deliberately over an escape hatch.
+- **Never read the maps directly. Always call the read-only functions.** Expiry
+  and lock release cost no transaction, which means they are never written to
+  storage: a lapsed story keeps `status: u0` (OPEN) in the `Stories` map forever,
+  and `LockedWeight` / `LiveProposal` keep their entries after the lock has
+  freed. The read-only functions apply the time gate and return the truth;
+  `get-story` and `get-story-status` report `EXPIRED`, `get-phase` reports
+  `"expired"`, and `get-locked-weight` reports `u0`. Stacks exposes map entries
+  over the API, so an indexer that reads `Stories` directly will show expired
+  stories as open and released locks as held, indefinitely. This looks fine in
+  testing and goes wrong in production.
+
+  | Read this | Not this |
+  |---|---|
+  | `get-story`, `get-story-status`, `get-phase` | the `Stories` map |
+  | `get-locked-weight`, `get-locked-until` | the `LockedWeight` map |
+  | `has-live-proposal`, `get-live-proposal` | the `LiveProposal` map |
+
 - **Eligibility is checked before membership.** A wallet with no weight proposing
   into a full legion gets `u401`, not `u441`.
 - **Post-conditions**: build every fund-moving tx in **deny** mode with explicit
