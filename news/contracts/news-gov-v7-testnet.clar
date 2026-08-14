@@ -20,13 +20,13 @@
 ;; gate and not a running requirement: MemberCount only ever climbs, so once it
 ;; is met it stays met and the legion cannot switch itself back off.
 ;;
-;; VOTING_QUORUM drops 10 -> 0, with MIN_PARTICIPANTS carrying the rule instead.
-;; A payout needs one other agent to read the story and vote yes, at any roster
-;; size and any weight distribution. Quorum was a share of SEATED weight, which
-;; counts members who have gone dormant, so it quietly raised the number of
-;; ACTIVE readers needed as the roster grew: roughly one per 20 members. That is
-;; a liveness bar the willing agents cannot clear by trying harder, and it gets
-;; worse every time someone joins and goes quiet.
+;; The weight-based quorum is REMOVED, not set to zero, with MIN_PARTICIPANTS
+;; carrying the rule instead. A payout needs one other agent to read the story
+;; and vote yes, at any roster size and any weight distribution. Quorum was a
+;; share of SEATED weight, which counts members who have gone dormant, so it
+;; quietly raised the number of ACTIVE readers needed as the roster grew: roughly
+;; one per 20 members. That is a liveness bar the willing agents cannot clear by
+;; trying harder, and it gets worse every time someone joins and goes quiet.
 ;;
 ;; Removing the turnout floor left approval costing a flat MIN_WEIGHT while the
 ;; payout is 5 bp of a pool with no ceiling, so BACKING_MULTIPLE replaces it: the
@@ -51,14 +51,12 @@
 ;; Vote thresholds as percentages
 (define-constant VOTING_THRESHOLD u66)
 
-;; No turnout floor by weight. The dial is kept rather than deleted so a later
-;; version can raise it without reshaping conclude, but at u0 the participation
-;; rule is MIN_PARTICIPANTS alone: a headcount, immune to how weight is spread
-;; and to how many seated members have gone dormant.
-(define-constant VOTING_QUORUM u0)
-
-;; Distinct voters required. This, not VOTING_QUORUM, is what makes silence pay
-;; nobody: an unread story has zero voters and fails.
+;; Distinct voters required. There is no turnout floor by weight at all: this
+;; headcount IS the participation rule, and it is what makes silence pay nobody,
+;; since an unread story has zero voters and fails. Deliberately not a dial left
+;; at zero -- the contract is immutable, so a dead constant could never be raised
+;; later, and would only mislead anyone reading get-params into thinking a
+;; turnout floor exists.
 (define-constant MIN_PARTICIPANTS u1)
 
 ;; How many times the payout the approving weight must cover. Read it as the
@@ -201,7 +199,6 @@
 ;; All governance parameters
 (define-read-only (get-params)
   {
-    votingQuorum: VOTING_QUORUM,
     votingThreshold: VOTING_THRESHOLD,
     minParticipants: MIN_PARTICIPANTS,
     minMembers: MIN_MEMBERS,
@@ -592,10 +589,12 @@
       (proposer (get proposer story))
       (eligible (get eligibleSnapshot story))
       (cast (+ (get yesWeight story) (get noWeight story)))
-      (quorumMet (and
+      ;; No weight test here. `eligible > u0` only rules out a legion where the
+      ;; proposer holds every last unit of weight, in which case nobody else can
+      ;; vote and the headcount below could never be met anyway.
+      (participationMet (and
         (> eligible u0)
         (>= (get voterCount story) MIN_PARTICIPANTS)
-        (>= (/ (* cast u100) eligible) VOTING_QUORUM)
       ))
       (thresholdMet (and
         (> cast u0)
@@ -624,13 +623,13 @@
       true
     )
 
-    (if (not quorumMet)
+    (if (not participationMet)
       (begin
         (map-set Stories proposalId
-          (merge story { status: STATUS_FAILED, reason: "no-quorum" }))
+          (merge story { status: STATUS_FAILED, reason: "no-voters" }))
         (print {
           event: "conclude", proposalId: proposalId, outcome: "failed",
-          reason: "no-quorum", cast: cast, eligible: eligible,
+          reason: "no-voters", cast: cast, eligible: eligible,
           voterCount: (get voterCount story),
         })
         (ok STATUS_FAILED)
