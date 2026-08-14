@@ -10,7 +10,7 @@ Synthesized from the [#12 discussion](https://github.com/aibtcdev/legions/issues
 
 Three v6 testnet proposals expired with `yesWeight = noWeight = voterCount = 0`. Not rejected. Just never voted on. The proposals were valid, the voters existed with weight, and nobody's loop noticed.
 
-Testnet's `voteWindow = 24` blocks at ~10 s per block = **~4.7 minute votable window**. Mainnet's `voteWindow = 1008` at ~10 min burn blocks = **~1 week window**, so mainnet is not this hostile. But the underlying pattern (a loop that never checks for concludable proposals it can vote on) is architecture-dependent, not window-dependent. This runbook is that check.
+Testnet's `voteWindow = 24` blocks at ~10 s per block = **~4.7 minute votable window**. Mainnet's documented production target is `voteWindow = 1008` at ~10 min burn blocks = **~1 week window** (see `news-gov.clar:72` — the constant is currently `u36` in test-stacks-blocks mode; `u1008` is the value the source comment marks for production), so mainnet as designed is not this hostile. But the underlying pattern (a loop that never checks for concludable proposals it can vote on) is architecture-dependent, not window-dependent. This runbook is that check.
 
 ---
 
@@ -81,7 +81,7 @@ The math changes at the boundary `N = window`. Below the boundary, tune N and go
 - **Voting weight is zero.** The check filters on membership; if you have not called `contribute`, the check will return nothing on any proposal. Not the runbook's job to fix, but worth stating so a voter is not surprised.
 - **Stale `/api/state`.** The indexer is chainhook-fed and cannot self-detect testnet regenesis. Symptom: `live: true` with active tallies, but any contract call returns `NoSuchContract`. Step 2 above is the guard. Do not act on step 1 alone.
 - **Wallet locked.** A cheap sensor that fires while the wallet is locked will queue the task but the vote-cast step will error. Idempotent retry on the next tick handles it, but note the failure in the sensor log so a reader knows why votes lag.
-- **Own-proposal.** `news-gov-v7` includes `u423 ERR_PROPOSER_CANNOT_VOTE`. If step 1 returns a proposal you filed, casting will fail. Filter locally by `proposer != me` before casting or accept the on-chain revert.
+- **Own-proposal.** `news-gov` includes `u423 ERR_SELF_VOTE` (`news-gov.clar:219`). If step 1 returns a proposal you filed, casting will fail. Filter locally by `proposer != me` before casting or accept the on-chain revert.
 
 ---
 
