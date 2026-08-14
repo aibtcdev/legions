@@ -1,33 +1,4 @@
-;; news-gov-v7
-;;
-;; v7 = v6 + a membership floor on proposing. No story may be proposed until
-;; MEMBERS_TO_ACTIVATE agents hold voting weight, so the legion is switched on by a real
-;; roster rather than by whoever showed up first. The floor is an ACTIVATION
-;; gate and not a running requirement: MemberCount only ever climbs, so once it
-;; is met it stays met and the legion cannot switch itself back off.
-;;
-;; The weight-based quorum is REMOVED, not set to zero, with MIN_VOTERS
-;; carrying the rule instead. A payout needs one other agent to read the story
-;; and vote yes, at any roster size and any weight distribution. Quorum was a
-;; share of SEATED weight, which counts members who have gone dormant, so it
-;; quietly raised the number of ACTIVE readers needed as the roster grew: roughly
-;; one per 20 members. That is a liveness bar the willing agents cannot clear by
-;; trying harder, and it gets worse every time someone joins and goes quiet.
-;;
-;; Removing the turnout floor left approval costing a flat MIN_WEIGHT_TO_ACT while the
-;; payout is 5 bp of a pool with no ceiling, so YES_MULTIPLE replaces it:
-;; the yes weight must cover 20x the payout, or the story settles "yes-short".
-;; That bar is a share of the money at stake and never of the roster, so it prices
-;; a self-dealer without reintroducing the dormancy problem.
-;;
-;; It prices the attack rather than preventing it, and that is understood rather
-;; than overlooked. Voting weight is never consumed, so the yes weight is bought
-;; once while the payout recurs; the multiple is a payback period, not a wall. What still holds a
-;; self-dealer back: the proposer may never vote on its own story,
-;; MIN_VOTERS still requires a distinct voter so silence pays nobody, and
-;; VOTING_THRESHOLD still needs 66% of cast weight, so a single no vote blocks a
-;; single yes. Closing it properly needs the bar to cover cumulative payouts per
-;; recipient, or weight that can be slashed, and neither is in this version.
+;; news-gov-v7. Rules and rationale: TESTNET-V7.md.
 
 ;; Lifecycle windows in burn blocks
 (define-constant VOTE_DELAY u2)
@@ -37,29 +8,10 @@
 ;; Vote thresholds as percentages
 (define-constant VOTING_THRESHOLD u66)
 
-;; Distinct voters required. There is no turnout floor by weight at all: this
-;; headcount IS the participation rule, and it is what makes silence pay nobody,
-;; since an unread story has zero voters and fails. Deliberately not a dial left
-;; at zero -- the contract is immutable, so a dead constant could never be raised
-;; later, and would only mislead anyone reading get-params into thinking a
-;; turnout floor exists.
+;; Distinct voters a story needs. This alone is what makes silence pay nobody.
 (define-constant MIN_VOTERS u1)
 
-;; How many times the payout the yes weight must cover. Not about WHETHER the
-;; story was approved -- VOTING_THRESHOLD settles that -- but whether the agents
-;; approving it were large enough to be releasing that much money. Equivalently:
-;; an agent can approve a payout of up to 5% of the weight it holds.
-;;
-;; Read it as the attacker's payback period in stories: clearing the bar costs 20
-;; payouts' worth of weight to buy and earns one payout per story, so that is how
-;; long a self-dealer waits before profiting. Voting weight is never consumed, so
-;; no multiple makes extraction impossible; it only sets the price and the delay.
-;;
-;; The ceiling is liveness. The bar is 20 * 5 bp of the pool, and a member of an
-;; n-way legion holds about 1/n of it, so one ordinary reader can still approve
-;; alone while the multiple stays under 2000/n: up to 95 at 21 members, 40 at 50, 20 at 100. At u20
-;; a 1/21 member clears it roughly 4.8x over, and small members can still combine
-;; because the bar is met by the SUM of yes votes, not per voter.
+;; Yes weight must cover this many times the payout, else "yes-short".
 (define-constant YES_MULTIPLE u20)
 
 ;; Agents holding voting weight before any story may be proposed
@@ -110,10 +62,7 @@
 )
 (define-data-var TotalWeight uint u0)
 
-;; Agents holding at least MIN_WEIGHT_TO_ACT, i.e. those who can actually vote.
-;; Weight is only ever added in this contract (there is no unstake or withdraw),
-;; so a principal crosses the floor once and never falls back below it. That
-;; makes this counter monotonic and lets it be maintained without a decrement.
+;; Principals holding at least MIN_WEIGHT_TO_ACT. Only ever climbs.
 (define-data-var MemberCount uint u0)
 
 ;; Weight locked by a live proposal
@@ -577,19 +526,13 @@
       (story (unwrap! (map-get? Stories proposalId) ERR_NO_PROPOSAL))
       (proposer (get proposer story))
       (cast (+ (get yesWeight story) (get noWeight story)))
-      ;; Just the headcount. A weight test here would be unreachable: nothing can
-      ;; be proposed until MEMBERS_TO_ACTIVATE principals each hold MIN_WEIGHT_TO_ACT_TO_ACT,
-      ;; so weight always exists outside the proposer.
+      ;; Headcount only; a weight test would be unreachable here.
       (participationMet (>= (get voterCount story) MIN_VOTERS))
       (thresholdMet (and
         (> cast u0)
         (>= (/ (* (get yesWeight story) u100) cast) VOTING_THRESHOLD)
       ))
-      ;; The weight approving a payout must cover YES_MULTIPLE times the
-      ;; payout. With no turnout floor, this is what stops a floor-stake wallet
-      ;; authorising a payout from a pool of any size: the bar tracks the money at
-      ;; stake rather than the roster, so it is immune to dormant members while
-      ;; still costing an attacker real capital.
+      ;; Yes weight must cover YES_MULTIPLE times the payout it releases.
       (yesMet (>= (get yesWeight story) (* (get payout story) YES_MULTIPLE)))
       (payout (get payout story))
       (poolShort (> payout (contract-call? .news-treasury-v7 get-balance)))
@@ -633,8 +576,7 @@
         )
         (if (not yesMet)
           (begin
-            ;; Distinct from "voted-down": the story was not rejected, it was
-            ;; approved by agents too small to authorise this much money.
+            ;; Not a rejection: approved, but by too little weight.
             (map-set Stories proposalId
               (merge story { status: STATUS_FAILED, reason: "yes-short" }))
             (print {

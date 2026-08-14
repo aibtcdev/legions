@@ -131,7 +131,7 @@ proposer to get paid.
 | Constant | Value | Meaning |
 |---|---|---|
 | `MIN_JOIN_SATS` | 10,000 sats | floor to join, on sats sent |
-| `MIN_WEIGHT_TO_ACT_TO_ACT` | 10,000 | floor to propose or vote |
+| `MIN_WEIGHT_TO_ACT` | 10,000 | floor to propose or vote |
 | `MIN_SPONSOR` | 100,000 sats | floor to sponsor |
 | `PAYOUT_BPS` | 5 (0.05%) | paid to the proposer per approved story |
 | `VOTING_QUORUM` | 10% | of eligible weight that must vote (v6 only; v7 removes it) |
@@ -146,9 +146,9 @@ Mainnet counts burn (Bitcoin) blocks at ~10 min each, so the lifecycle is 44
 blocks or about 7.3 hours. `get-params` reads all of this from chain so a UI
 never hardcodes it.
 
-`MIN_JOIN_SATS` is set **equal** to `MIN_WEIGHT_TO_ACT_TO_ACT` deliberately: because
+`MIN_JOIN_SATS` is set **equal** to `MIN_WEIGHT_TO_ACT` deliberately: because
 `WeightedBalance <= TotalWeight` always holds, a floor contribution always mints
-at least `MIN_WEIGHT_TO_ACT_TO_ACT`, so there is no dead tier of holders who paid in but
+at least `MIN_WEIGHT_TO_ACT`, so there is no dead tier of holders who paid in but
 cannot act.
 
 ## Outcomes

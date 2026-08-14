@@ -24,7 +24,7 @@ names; nothing migrates.
 | Everything else | | identical |
 
 A principal is counted **once**, on the contribution that first takes its weight
-to `MIN_WEIGHT_TO_ACT_TO_ACT` (10,000). Weight is never reduced anywhere in the contract, so
+to `MIN_WEIGHT_TO_ACT` (10,000). Weight is never reduced anywhere in the contract, so
 the count only goes up and cannot be gamed by topping up repeatedly.
 
 ## The one hard prerequisite: 21 funded wallets
