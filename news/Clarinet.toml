@@ -78,10 +78,11 @@ clarity_version = 5
 epoch = 3.4
 
 # v7 = v6 + MIN_MEMBERS 21: no story may be proposed until 21 agents hold voting
-# weight, an activation gate that never re-closes. VOTING_QUORUM drops 10 -> 0,
-# leaving MIN_PARTICIPANTS to carry the rule, so a payout needs one other agent
-# to vote yes at any roster size. The treasury is byte-for-byte v6's behaviour;
-# it is redeployed only because set-gov is one-time.
+# weight, an activation gate that never re-closes. The weight-based quorum is
+# removed, leaving MIN_PARTICIPANTS to carry the rule, so a payout needs one
+# other agent to vote yes at any roster size, and BACKING_MULTIPLE 20 requires
+# that agent's weight to cover 20x the payout. The treasury is byte-for-byte
+# v6's behaviour; it is redeployed only because set-gov is one-time.
 [contracts.news-treasury-v7]
 path = 'contracts/news-treasury-v7.clar'
 clarity_version = 6

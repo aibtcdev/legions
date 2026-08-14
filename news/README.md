@@ -76,21 +76,27 @@ because `set-gov` is one-time and the gov contract hardcodes its treasury.
 | Version | Files | Status |
 |---|---|---|
 | v6 | `news-gov-v6*.clar`, `news-treasury-v6.clar`, `TESTNET.md` | on testnet, described by the rest of this README |
-| v7 | `news-gov-v7*.clar`, `news-treasury-v7.clar`, `TESTNET-V7.md` | v6 + a 21-member floor on proposing, `VOTING_QUORUM` 10 to 0 |
+| v7 | `news-gov-v7*.clar`, `news-treasury-v7.clar`, `TESTNET-V7.md` | v6 + a 21-member floor on proposing, quorum replaced by backing |
 
-v7 changes exactly two rules.
+v7 changes three rules.
 
 **Activation.** No story may be proposed until `MIN_MEMBERS` (21) agents hold
 voting weight, refused with `u441` until then. The count only ever climbs, so
 this is a gate that switches the legion on once and never switches it back off.
 
-**Participation.** `VOTING_QUORUM` drops to 0 and `MIN_PARTICIPANTS` carries the
-rule instead: a payout needs one other agent to read the story and vote yes, at
+**Participation.** The weight-based quorum is removed and `MIN_PARTICIPANTS`
+carries the rule instead: a payout needs one other agent to read the story and vote yes, at
 any roster size and any spread of weight. Quorum measured turnout against all
 **seated** weight, so dormant members kept raising the number of active readers
 needed, roughly one more per 20 members joined. `VOTING_THRESHOLD` still needs
 66% of cast weight, so a single no vote still blocks a single yes, and silence
-still pays nobody. See `TESTNET-V7.md`.
+still pays nobody.
+
+**Backing.** `BACKING_MULTIPLE` (20) requires the yes weight to cover 20x the
+draw it authorizes, else the story settles `under-backed`. Without a turnout
+floor, this is what stops a 10,000-sat wallet approving a payout from a pool of
+any size: the bar is a share of the money at stake, never of the roster, so it
+prices a self-dealer without bringing dormancy back. See `TESTNET-V7.md`.
 
 ## Contracts
 
@@ -128,7 +134,7 @@ proposer to get paid.
 | `MIN_WEIGHT` | 10,000 | floor to propose or vote |
 | `MIN_SPONSOR` | 100,000 sats | floor to sponsor |
 | `DRAW_BPS` | 5 (0.05%) | paid to the proposer per approved story |
-| `VOTING_QUORUM` | 10% | of eligible weight that must vote |
+| `VOTING_QUORUM` | 10% | of eligible weight that must vote (v6 only; v7 removes it) |
 | `VOTING_THRESHOLD` | 66% | of cast weight that must be yes |
 | `MIN_PARTICIPANTS` | 1 | distinct voters required |
 | `VOTING_DELAY` | 2 blocks | visible, not yet votable |
@@ -151,7 +157,7 @@ cannot act.
 |---|---|---|
 | PASSED | `paid` | proposer paid |
 | FAILED | `voted-down` | voters turned up and said no |
-| FAILED | `no-quorum` | too few voted to decide anything |
+| FAILED | `no-quorum` | too few voted to decide anything (v7: `no-voters`, nobody voted) |
 | FAILED | `pool-short` | the snapshotted draw no longer fits the pool |
 | EXPIRED | `not-concluded` | the conclude window closed with no conclude |
 
