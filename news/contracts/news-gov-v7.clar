@@ -14,12 +14,20 @@
 ;; a liveness bar the willing agents cannot clear by trying harder, and it gets
 ;; worse every time someone joins and goes quiet.
 ;;
-;; The cost is deliberate. Quorum was what made a colluding pair expensive; at 0
-;; two agents can approve each other's stories, bounded only by PROPOSE_INTERVAL
-;; and by the draw being 5 bp. What still holds them back: the proposer may
-;; never vote on its own story, MIN_PARTICIPANTS still requires a distinct voter
-;; so silence pays nobody, and VOTING_THRESHOLD still needs 66% of cast weight,
-;; so a single no vote blocks a single yes.
+;; Removing the turnout floor left approval costing a flat MIN_WEIGHT while the
+;; payout is 5 bp of a pool with no ceiling, so BACKING_MULTIPLE replaces it: the
+;; yes weight must cover 20x the draw, or the story settles "under-backed". That
+;; bar is a share of the money at stake and never of the roster, so it prices a
+;; self-dealer without reintroducing the dormancy problem.
+;;
+;; It prices the attack rather than preventing it, and that is understood rather
+;; than overlooked. Voting weight is never consumed, so backing is bought once
+;; while the draw recurs; K is a payback period, not a wall. What still holds a
+;; self-dealer back: the proposer may never vote on its own story,
+;; MIN_PARTICIPANTS still requires a distinct voter so silence pays nobody, and
+;; VOTING_THRESHOLD still needs 66% of cast weight, so a single no vote blocks a
+;; single yes. Closing it properly needs backing to cover cumulative payouts per
+;; recipient, or slashable backing, and neither is in this version.
 
 ;; Lifecycle windows in burn blocks
 (define-constant VOTING_DELAY u2)
@@ -38,6 +46,19 @@
 ;; Distinct voters required. This, not VOTING_QUORUM, is what makes silence pay
 ;; nobody: an unread story has zero voters and fails.
 (define-constant MIN_PARTICIPANTS u1)
+
+;; How many times the payout the approving weight must cover. Read it as the
+;; attacker's payback period in stories: backing costs K draws to buy and earns
+;; one draw per story, so K is how long a self-dealer waits before profiting.
+;; Voting weight is never consumed, so no value of K makes extraction impossible;
+;; it only sets the price and the delay.
+;;
+;; The ceiling is liveness. The bar is K * 5 bp of the pool, and a member of an
+;; n-way legion holds about 1/n of it, so one ordinary reader can still approve
+;; alone while K <= 2000/n: up to 95 at 21 members, 40 at 50, 20 at 100. At u20
+;; a 1/21 member clears it roughly 4.8x over, and small members can still combine
+;; because backing is the SUM of yes weight, not a per-voter test.
+(define-constant BACKING_MULTIPLE u20)
 
 ;; Agents holding voting weight before any story may be proposed
 (define-constant MIN_MEMBERS u21)
@@ -170,6 +191,7 @@
     votingThreshold: VOTING_THRESHOLD,
     minParticipants: MIN_PARTICIPANTS,
     minMembers: MIN_MEMBERS,
+    backingMultiple: BACKING_MULTIPLE,
     minWeight: MIN_WEIGHT,
     minContribution: MIN_CONTRIBUTION,
     drawBps: DRAW_BPS,
@@ -565,12 +587,12 @@
         (> cast u0)
         (>= (/ (* (get yesWeight story) u100) cast) VOTING_THRESHOLD)
       ))
-      ;; The weight approving a payout must be at least the payout itself. With
-      ;; no turnout floor, this is what stops a floor-stake wallet authorising a
-      ;; draw from a pool of any size: the bar tracks the money at stake rather
-      ;; than the roster, so it is immune to dormant members while still costing
-      ;; an attacker real capital. See the note in conclude's backing branch.
-      (backingMet (>= (get yesWeight story) (get draw story)))
+      ;; The weight approving a payout must cover BACKING_MULTIPLE times the
+      ;; payout. With no turnout floor, this is what stops a floor-stake wallet
+      ;; authorising a draw from a pool of any size: the bar tracks the money at
+      ;; stake rather than the roster, so it is immune to dormant members while
+      ;; still costing an attacker real capital.
+      (backingMet (>= (get yesWeight story) (* (get draw story) BACKING_MULTIPLE)))
       (draw (get draw story))
       (poolShort (> draw (contract-call? .news-treasury-v7 get-balance)))
     )
@@ -619,7 +641,7 @@
             (print {
               event: "conclude", proposalId: proposalId, outcome: "failed",
               reason: "under-backed", yesWeight: (get yesWeight story),
-              draw: draw,
+              draw: draw, required: (* draw BACKING_MULTIPLE),
             })
             (ok STATUS_FAILED)
           )
