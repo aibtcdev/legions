@@ -15,8 +15,8 @@ names; nothing migrates.
 |---|---|---|
 | Members required to propose | none | **21** (`MIN_MEMBERS`), once, then never again |
 | `VOTING_QUORUM` | 10% of eligible | **0**, no turnout floor by weight |
-| Backing | none | **yes weight must be at least the draw**, else `under-backed` |
-| What a payout needs | one reader holding 10% of eligible | one reader holding at least the draw |
+| Backing | none | **yes weight must cover 20x the draw**, else `under-backed` |
+| What a payout needs | one reader holding 10% of eligible | one reader holding 20x the draw, or several summing to it |
 | New error | | `u441` `ERR_TOO_FEW_MEMBERS` |
 | New reads | | `get-member-count`, `members-met`, `minMembers` in `get-params`, `membersOk` / `memberCount` / `minMembers` in `propose-status` |
 | Everything else | | identical |
@@ -211,15 +211,29 @@ payout requires does not change as the legion grows or as members go quiet.
 ## Notes
 
 - **Backing prices the drain, it does not prevent it.** `conclude` requires the
-  yes weight to be at least the draw, which is what stops a floor-stake wallet
-  authorising a payout from a pool of any size. The bar is the draw itself, so it
-  tracks the money at stake and never the roster, and an ordinary member of a
-  21-way legion holds about 95x it. But backing weight is bought once while the
-  draw recurs, so an attacker holding just over one draw breaks even after about
-  two stories and profits after that. Measured, not assumed: a 175,000-sat stake
-  extracted 629,734 over six stories. Raising the multiple raises the payback
-  period in proportion, and costs liveness in the same proportion. This is the
-  open trade-off; see the audit.
+  yes weight to cover `BACKING_MULTIPLE` (20) times the draw, which is what stops
+  a floor-stake wallet authorising a payout from a pool of any size. The bar is a
+  share of the money at stake and never of the roster, so it prices a self-dealer
+  without reintroducing the dormancy problem.
+
+  Read the multiple as **the attacker's payback period in stories**: backing
+  costs 20 draws to buy and earns one draw per story, so a self-dealer waits
+  about 20 stories, roughly 3 days at the mainnet rate of 8 a day, before
+  profiting. Voting weight is never consumed, so no multiple makes extraction
+  impossible; K only sets the price and the delay. Measured at K=1, a
+  175,000-sat stake extracted 629,734 over six stories; K=20 multiplies that
+  wait by twenty without changing its shape.
+
+  The ceiling is liveness. A member of an n-way legion holds about 1/n of the
+  pool, so one ordinary reader can still approve alone while K <= 2000/n: up to
+  95 at 21 members, 40 at 50, 20 at 100. At 21 members a 1/21 holder clears the
+  bar about 4.8x over. Backing is the SUM of yes weight, so members too small to
+  authorise alone can still authorise together, and a member at the 10,000-sat
+  floor can approve alone only while the pool is under 1,000,000 sats, since the
+  bar is 1% of the pool at K=20. At a 5,000,000-sat pool the solo-approval
+  threshold is 50,000 sats of weight, five times the join minimum, and smaller
+  members vote and combine rather than authorising alone. Closing the hole properly needs backing to cover cumulative payouts per
+  recipient, or slashable backing; neither is in this version. See the audit.
 - **`VOTING_QUORUM` is 0, and the dial is kept rather than deleted.** There is
   no turnout floor by weight; `MIN_PARTICIPANTS` (1) is the whole participation
   rule. The constant stays in the source and in `get-params` so a later version
