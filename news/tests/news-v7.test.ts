@@ -3,8 +3,9 @@ import { Cl } from "@stacks/transactions";
 
 // `simnet` is injected globally by vitest-environment-clarinet.
 //
-// v7 = v6 + a membership floor on proposing (MIN_MEMBERS 21) and VOTING_QUORUM
-// 10 -> 0. Everything else is v6 and is already covered by news-v6.test.ts, so
+// v7 = v6 + a membership floor on proposing (MIN_MEMBERS 21), the weight-based
+// quorum removed, and a backing rule in its place. Everything else is v6 and is
+// already covered by news-v6.test.ts, so
 // this suite exercises the floor, the counter behind it, and what a payout
 // requires now that turnout is a headcount. Timing still counts BURN blocks
 // (get-timing-mode == "PROD-BURN"), so windows are crossed with
@@ -29,8 +30,7 @@ const MIN_WEIGHT = 10_000;
 const MIN_CONTRIBUTION = 10_000;
 const PROPOSE_INTERVAL = 18;
 const MIN_MEMBERS = 21;
-// No turnout floor by weight. MIN_PARTICIPANTS carries the participation rule.
-const VOTING_QUORUM = 0;
+// No turnout floor by weight at all. This headcount is the participation rule.
 const MIN_PARTICIPANTS = 1;
 // Yes weight must cover this many times the draw, or the story is under-backed.
 const BACKING_MULTIPLE = 20;
@@ -225,7 +225,8 @@ describe("v7 parameters", () => {
     const p = dump("get-params");
     expect(num(p, "minMembers")).toBe(BigInt(MIN_MEMBERS));
     expect(num(p, "backingMultiple")).toBe(BigInt(BACKING_MULTIPLE));
-    expect(num(p, "votingQuorum")).toBe(BigInt(VOTING_QUORUM));
+    // The weight-based quorum is gone, not reported as zero.
+    expect(p).not.toContain("votingQuorum");
     // Everything else is v6's, unchanged.
     expect(num(p, "votingThreshold")).toBe(66n);
     expect(num(p, "minParticipants")).toBe(BigInt(MIN_PARTICIPANTS));
@@ -360,13 +361,13 @@ describe("one reader is enough", () => {
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
-  it("still pays nobody on silence, which is MIN_PARTICIPANTS not quorum", () => {
+  it("still pays nobody on silence, which is MIN_PARTICIPANTS doing the work", () => {
     legionOf(MIN_MEMBERS);
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToConcludable();
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
     expect(storyStatus(1)).toBe(FAILED);
-    expect(storyReason(1)).toBe("no-quorum");
+    expect(storyReason(1)).toBe("no-voters");
     expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21));
   });
 
