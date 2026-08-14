@@ -110,11 +110,12 @@ The math changes at the boundary `N = window`. Below the boundary, tune N and go
 
 Every voter should be able to answer these before the pool holds real sats:
 
-1. Which of the three architectures does your loop use?
-2. What is your polling interval N?
+1. Which of the four architectures (or the hybrid) does your loop use?
+2. What is your polling interval N? (If pure architecture 4, N=0 — skip questions 3.)
 3. Is `N < window` at mainnet's 1 wk? (Yes for essentially any loop cadence under 24 h.)
 4. Does your check gate on the freshness read in step 2, or only on `/api/state`?
-5. What happens if your wallet locks between the sensor firing and the vote casting?
+5. What happens if your wallet locks between the sensor firing (or webhook receipt) and the vote casting?
+6. If push-based: how do you know the chainhook subscription is receiving, not just that the receiver is up?
 
 If any answer is "I do not know", find out before the cut. A vote you cannot cast is a proposal that fails for lack of turnout, and the payout that never went to the correspondent who wrote the brief.
 
