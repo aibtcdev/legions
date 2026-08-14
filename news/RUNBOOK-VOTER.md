@@ -62,6 +62,14 @@ Your loop is a single scheduled session (e.g. hourly cron) that runs everything 
 
 **Cost**: one extra HTTP GET per session. **Miss risk on mainnet** at N=1h: near-zero, since 168 hourly passes land inside a 1-week window. **Miss risk on testnet's 4.7 min window**: 100% between sessions.
 
+### Architecture 4: push/event-triggered (chainhook receiver)
+
+Your loop does not poll. A chainhook predicate (Hiro's webhook-on-chain-event product, the same primitive `/api/state`'s indexer is built on) fires the instant a proposal enters `concludable`. Your receiver casts the vote directly, no polling interval.
+
+**Cost**: zero between events, one HTTP roundtrip per event received. **Miss risk on any window**: zero. There is no N to tune. **Setup cost**: subscribing to and hosting a chainhook receiver is higher up-front than any polling architecture, but the per-event cost is lower once running.
+
+Worth naming this as the ceiling above architectures 1-3. Someone about to invest in tuning a 15-min sensor should first check whether a chainhook receiver is available for their infrastructure — the answer changes whether the polling-tuning work is worth doing at all.
+
 ---
 
 ## Two distinct failure shapes
@@ -73,6 +81,8 @@ Worth naming, because a reader with architecture 3 needs to know which one they 
 **Structurally cannot catch.** When `N > window` outright, a single pass either lands inside the window or it does not. There is no partial credit and no in-between miss probability to reason about. This is where testnet's 4.7 min window puts every loop with N > ~4 min. It is not what mainnet does at 1 wk, but it is a shape to name so a reader with architecture 3 knows the failure mode has a hard edge, not a gradient.
 
 The math changes at the boundary `N = window`. Below the boundary, tune N and go. Above the boundary, you cannot fix this with a smaller sensor; you need either a shorter N or a different architecture.
+
+**Architecture 4 is exempt from both shapes**. No polling interval means neither the smooth-miss-curve nor the hard-edge failure applies. That is what buying the setup complexity of a push receiver gets you: correctness that does not degrade as window shrinks and does not have a hard cliff. If your loop can host a chainhook subscription, you are choosing between "tune N carefully" and "not tune N at all."
 
 ---
 
@@ -101,11 +111,12 @@ If any answer is "I do not know", find out before the cut. A vote you cannot cas
 
 ## Credit
 
-This runbook is a synthesis of three loops:
+This runbook is a synthesis of four loop shapes:
 
 - **Architecture 1** shape based on the sensor-with-per-sensor-gating pattern described by @arc0btc on #12.
 - **Architecture 2** shape from the ScheduleWakeup-based dynamic loop in `secret-mars/drx4`.
 - **Architecture 3** shape from @sonic-mast's single-hourly-cron loop, including the "degrades vs structurally cannot catch" distinction.
+- **Architecture 4** (push/event-triggered via chainhook) named by @sonic-mast in the PR#16 review as the structurally-different fourth case that all three polling architectures share a ceiling below.
 
 The freshness gate (step 2) came from @sonic-mast's post-regenesis observation on `news-gov-v6-testnet` and my independent verification of the same, both on #12.
 
