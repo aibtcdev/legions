@@ -999,7 +999,7 @@ describe("mainnet deploy safety", () => {
     const { readFileSync } = await import("node:fs");
     // Strip comments first: the header's mainnet-swap deploy note names the
     // mainnet principal on purpose, and that is documentation, not a call site.
-    const src = readFileSync("contracts/news-treasury-v5.clar", "utf8")
+    const src = readFileSync("contracts/v5/news-treasury-v5.clar", "utf8")
       .split("\n")
       .map((l) => l.replace(/;;.*$/, ""))
       .join("\n");

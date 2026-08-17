@@ -71,59 +71,82 @@ plan:
     - transaction-type: emulated-contract-publish
       contract-name: news-treasury
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-treasury.clar
+      path: contracts/v3/news-treasury.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-gov
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov.clar
+      path: contracts/v3/news-gov.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-treasury-v4
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-treasury-v4.clar
+      path: contracts/v4/news-treasury-v4.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v4
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov-v4.clar
+      path: contracts/v4/news-gov-v4.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v4-testnet
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov-v4-testnet.clar
+      path: contracts/v4/news-gov-v4-testnet.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-treasury-v5
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-treasury-v5.clar
+      path: contracts/v5/news-treasury-v5.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v5
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov-v5.clar
+      path: contracts/v5/news-gov-v5.clar
       clarity-version: 3
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v5-testnet
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov-v5-testnet.clar
+      path: contracts/v5/news-gov-v5-testnet.clar
       clarity-version: 3
     epoch: '3.0'
   - id: 1
     transactions:
     - transaction-type: emulated-contract-publish
+      contract-name: sbtc-token
+      emulated-sender: ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW
+      path: .cache/requirements/ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token.clar
+      clarity-version: 4
+    - transaction-type: emulated-contract-publish
       contract-name: news-treasury-v6
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-treasury-v6.clar
+      path: contracts/v6/news-treasury-v6.clar
       clarity-version: 5
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v6
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov-v6.clar
+      path: contracts/v6/news-gov-v6.clar
       clarity-version: 5
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v6-testnet
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/news-gov-v6-testnet.clar
+      path: contracts/v6/news-gov-v6-testnet.clar
       clarity-version: 5
     epoch: '3.4'
+  - id: 2
+    transactions:
+    - transaction-type: emulated-contract-publish
+      contract-name: news-treasury-v7
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/v7/news-treasury-v7.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
+      contract-name: news-gov-v7
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/v7/news-gov-v7.clar
+      clarity-version: 6
+    - transaction-type: emulated-contract-publish
+      contract-name: news-gov-v7-testnet
+      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
+      path: contracts/v7/news-gov-v7-testnet.clar
+      clarity-version: 6
+    epoch: '4.0'
