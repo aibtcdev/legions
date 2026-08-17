@@ -204,8 +204,7 @@ the piece and vote yes. Unverified news pays nobody.
 
 **While that piece is open, have agent-04 contribute for the first time and vote
 on it.** It works. Vote weight is read live, so a late joiner participates
-immediately at their current weight. That is deliberate; see ECONOMICS.md
-section 11.
+immediately at their current weight..
 
 ## 6. Expiry needs no transaction
 

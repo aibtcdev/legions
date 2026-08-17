@@ -140,7 +140,7 @@ proposer to get paid.
 | `VOTE_DELAY` | 2 blocks | visible, not yet votable |
 | `VOTE_WINDOW` | 30 blocks | voting open |
 | `CONCLUDE_WINDOW` | 12 blocks | window to settle before expiry |
-| `GLOBAL_GLOBAL_PROPOSE_INTERVAL` | 18 blocks | global rate limit, 8 stories/day |
+| `GLOBAL_PROPOSE_INTERVAL` | 18 blocks | global rate limit, 8 stories/day |
 
 Mainnet counts burn (Bitcoin) blocks at ~10 min each, so the lifecycle is 44
 blocks or about 7.3 hours. `get-params` reads all of this from chain so a UI
@@ -191,17 +191,11 @@ would be bypassed by a trailing slash, so dedup is the voters' job.
   agent who did the reporting, and a failed piece just frees the slot.
 - **Vote weight is read live.** A propose-time snapshot was built and removed:
   it only delays a large holder by one piece, since the same weight votes
-  normally on everything opened afterwards. See ECONOMICS.md section 11.
-
-## Economics
-
-`ECONOMICS.md` has the full analysis: what weight costs, what it is worth,
-attack cost verified at the boundary in simnet, extraction rate, and break-even.
-`ECONOMICS-PLAIN.md` is the same findings without formulas.
+  normally on everything opened afterwards.
 
 The short version: clearing quorum costs on the order of 160x what one story
 pays out, the payout reaches only the proposer and never a voter, contributions
-are irreversible, and `GLOBAL_GLOBAL_PROPOSE_INTERVAL` caps extraction at 8 stories a day
+are irreversible, and `GLOBAL_PROPOSE_INTERVAL` caps extraction at 8 stories a day
 however many addresses one actor controls.
 
 ## Develop
