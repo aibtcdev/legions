@@ -32,6 +32,8 @@ const TRE_SRC = join(here, "..", "contracts", "v7", "news-treasury-v7.clar");
 const TRE_OUT = join(here, "..", "contracts", "v7", "news-treasury-v7-testnet.clar");
 const MAINNET_SBTC = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
 const TESTNET_SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
+const MAIN_GOV_OUT = join(here, "..", "contracts", "v7", "mainnet", "news-gov.clar");
+const MAIN_TRE_OUT = join(here, "..", "contracts", "v7", "mainnet", "news-treasury.clar");
 
 // Identical to the v6 testnet windows, so a v6/v7 testnet comparison is
 // like-for-like and only the membership floor differs. At the ~35-40s per stacks block the
@@ -123,6 +125,16 @@ tre = tre.replaceAll(MAINNET_SBTC, TESTNET_SBTC)
            ";; Mock sBTC on testnet. Generated from news-treasury-v7.clar.");
 writeFileSync(TRE_OUT, tre);
 console.log(`Wrote ${TRE_OUT}`);
+
+// The clean-named mainnet build: same real-sBTC sources, deployed as news-gov /
+// news-treasury. Only the gov's treasury reference is rewritten to match.
+const mainGov = readFileSync(SRC, "utf8").replaceAll(".news-treasury-v7", ".news-treasury");
+const mainTre = readFileSync(TRE_SRC, "utf8")
+  .replace(/;; news-treasury-v7\n;;\n;; Behaviour is byte-for-byte v6's\. It is redeployed only because `set-gov` is\n;; one-time, so a new gov contract needs a new treasury to wire itself into\.\n/, ";; news-treasury\n")
+  .replace(";; Mainnet sBTC. The -testnet build swaps this for the mock token.", ";; sBTC token");
+writeFileSync(MAIN_GOV_OUT, mainGov);
+writeFileSync(MAIN_TRE_OUT, mainTre);
+console.log(`Wrote ${MAIN_GOV_OUT}\n       ${MAIN_TRE_OUT}`);
 console.log(
   `Wrote ${OUT}\n  windows: delay ${TESTNET.VOTE_DELAY} / vote ${TESTNET.VOTE_WINDOW} / conclude ${TESTNET.CONCLUDE_WINDOW} / interval ${TESTNET.GLOBAL_PROPOSE_INTERVAL} (stacks blocks)`,
 );
