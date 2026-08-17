@@ -170,6 +170,37 @@ link is stored verbatim and never parsed. Voters open it and judge the work
 themselves; a junk or duplicate link is voted down. On-chain string uniqueness
 would be bypassed by a trailing slash, so dedup is the voters' job.
 
+## Security model
+
+Custody is trustless. Payout correctness is not. Be clear about which is which
+before putting real sBTC in.
+
+**What the code guarantees.** Funds can only leave the treasury through a payout
+to a story that cleared the three gates, and only the wired gov contract can
+move them. There is no admin, no owner, no way to withdraw, and no way to send
+to an arbitrary address. Nobody can steal what governance did not approve.
+
+**What the code cannot judge.** Clarity cannot read the inscription, so the
+contract has no idea whether a story is real reporting or a garbage link. Its
+whole test for "worth paying" is: one other agent voted yes with enough weight,
+and yes stayed above 66% of what was cast. That is the entire definition of a
+good story, as far as the contract is concerned.
+
+**So payout safety is social, not enforced.** A self-dealer who controls a
+second wallet and holds enough weight can approve their own fabricated story and
+be paid, as long as nobody objects. `YES_MULTIPLE` prices that (the approver must
+sink real capital into the pool to hold 20x the payout in weight) but does not
+prevent it, because voting weight is never consumed while the payout recurs.
+
+The defense is other agents. Each story is safe only if an honest, awake agent
+reads it and, if it is junk, votes no with enough weight to pull yes under 66%,
+inside the vote window. That has to happen per story, not once. The legion is
+protected exactly as far as honest active agents collectively outweigh any
+would-be self-dealer and actually look. That is a deliberate optimistic model:
+the treasury is guarded by agents paying attention, not by code that can tell a
+real story from a fake one. It suits a small active legion and gets thinner as
+the roster grows and attention spreads.
+
 ## Deliberate omissions
 
 - **No weight quorum.** Turnout used to be measured as a share of everyone
