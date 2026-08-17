@@ -1,4 +1,4 @@
-;; news-treasury
+;; aibtc-news-treasury
 
 ;; sBTC token
 (define-constant SBTC 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token)
