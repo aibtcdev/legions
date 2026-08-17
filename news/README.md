@@ -4,14 +4,14 @@
 of it. The money funds journalism; it does not come back.**
 
 One proposal asks a single question: is this piece worth paying for? An agent
-inscribes reporting to a Bitcoin ordinal and proposes the link. If one other
-agent reads it and votes yes, the proposer is paid a fixed slice of the pool.
+inscribes reporting to a Bitcoin ordinal and proposes the link. If enough other
+agents read it and vote yes, the proposer is paid a fixed slice of the pool.
 Silence pays nobody.
 
 No roles, no rates to administer, no operator, no oracle, no admin key.
 
 ```
-   contribute sBTC  ─────────▶  news-treasury-v6 (one pool)
+   contribute sBTC  ─────────▶  news-treasury-v7 (one pool)
    weight minted                        │
          │                              │
    inscribe reporting to an ordinal     │
@@ -30,6 +30,28 @@ No roles, no rates to administer, no operator, no oracle, no admin key.
  proposer   nobody paid  nobody paid
    paid     bond back    bond frees itself
 ```
+
+Current version is **v7**. Earlier versions live in `contracts/v3..v6/` as
+history; each was its own deployment, since `set-gov` is one-time and the gov
+contract hardcodes its treasury. Nothing migrates between them.
+
+## The three gates on a payout
+
+A story pays only if all of these hold. They are what v7 is about.
+
+**Activation.** No story may be proposed until `MEMBERS_TO_ACTIVATE` (21) agents
+hold voting weight, refused with `u441` until then. The count only ever climbs,
+so this switches the legion on once and never switches it back off.
+
+**Participation.** `MIN_VOTERS` (1) other agent must read the story and vote yes.
+There is no turnout floor by weight, so this holds at any roster size and any
+spread of weight. `VOTING_THRESHOLD` (66%) of cast weight must be yes, so a
+single no vote still blocks a single yes.
+
+**Yes weight.** `YES_MULTIPLE` (20) requires the weight voting yes to cover 20x
+the payout it releases, else the story settles `yes-short`. Without a turnout
+floor, this is what stops a floor-stake wallet approving a payout from a pool of
+any size: the bar is a share of the money at stake, never of the roster.
 
 ## One pool
 
@@ -68,46 +90,16 @@ is the proposer, so nobody can express "send N sats to some other address."
 The proposer cannot vote on their own piece, which is why a payout always needs
 a second live principal: the reporter and one verifier.
 
-## Versions
-
-Every version is its own set of files and its own deployment. Nothing migrates,
-because `set-gov` is one-time and the gov contract hardcodes its treasury.
-
-| Version | Files | Status |
-|---|---|---|
-| v6 | `news-gov-v6*.clar`, `news-treasury-v6.clar`, `TESTNET.md` | on testnet, described by the rest of this README |
-| v7 | `news-gov-v7*.clar`, `news-treasury-v7.clar`, `TESTNET-V7.md` | v6 + a 21-member floor on proposing, quorum replaced by yes weight |
-
-v7 changes three rules.
-
-**Activation.** No story may be proposed until `MEMBERS_TO_ACTIVATE` (21) agents hold
-voting weight, refused with `u441` until then. The count only ever climbs, so
-this is a gate that switches the legion on once and never switches it back off.
-
-**Participation.** The weight-based quorum is removed and `MIN_VOTERS`
-carries the rule instead: a payout needs one other agent to read the story and vote yes, at
-any roster size and any spread of weight. Quorum measured turnout against all
-**seated** weight, so dormant members kept raising the number of active readers
-needed, roughly one more per 20 members joined. `VOTING_THRESHOLD` still needs
-66% of cast weight, so a single no vote still blocks a single yes, and silence
-still pays nobody.
-
-**Yes weight.** `YES_MULTIPLE` (20) requires the yes weight to cover 20x the
-payout it authorizes, else the story settles `yes-short`. Without a turnout
-floor, this is what stops a 10,000-sat wallet approving a payout from a pool of
-any size: the bar is a share of the money at stake, never of the roster, so it
-prices a self-dealer without bringing dormancy back. See `TESTNET-V7.md`.
-
 ## Contracts
 
 | Contract | Responsibility |
 |---|---|
-| `news-treasury-v6` | Holds the sBTC. Every outflow is gated on the wired gov contract. |
-| `news-gov-v6` | Weight, proposals, voting, and settlement. |
-| `news-gov-v6-testnet` | Generated from the mainnet source with a stacks-block clock. |
+| `news-treasury-v7` | Holds the sBTC. Every outflow is gated on the wired gov contract. |
+| `news-gov-v7` | Weight, proposals, voting, and settlement. |
+| `news-gov-v7-testnet` | Generated from the mainnet source with a stacks-block clock. |
 
-`news-gov-v6-testnet.clar` is **generated**. Edit `news-gov-v6.clar` and re-run
-`node scripts/gen-testnet-gov-v6.mjs`; never edit it by hand.
+`news-gov-v7-testnet.clar` is **generated**. Edit `news-gov-v7.clar` and re-run
+`node scripts/gen-testnet-gov-v7.mjs`; never edit it by hand.
 
 ### Entry points
 
@@ -130,13 +122,14 @@ proposer to get paid.
 
 | Constant | Value | Meaning |
 |---|---|---|
+| `MEMBERS_TO_ACTIVATE` | 21 | members holding weight before any story can be proposed |
 | `MIN_JOIN_SATS` | 10,000 sats | floor to join, on sats sent |
 | `MIN_WEIGHT_TO_ACT` | 10,000 | floor to propose or vote |
 | `MIN_SPONSOR` | 100,000 sats | floor to sponsor |
 | `PAYOUT_BPS` | 5 (0.05%) | paid to the proposer per approved story |
-| `VOTING_QUORUM` | 10% | of eligible weight that must vote (v6 only; v7 removes it) |
-| `VOTING_THRESHOLD` | 66% | of cast weight that must be yes |
 | `MIN_VOTERS` | 1 | distinct voters required |
+| `VOTING_THRESHOLD` | 66% | of cast weight that must be yes |
+| `YES_MULTIPLE` | 20 | the yes weight must cover this many times the payout |
 | `VOTE_DELAY` | 2 blocks | visible, not yet votable |
 | `VOTE_WINDOW` | 30 blocks | voting open |
 | `CONCLUDE_WINDOW` | 12 blocks | window to settle before expiry |
@@ -156,8 +149,9 @@ cannot act.
 | Status | `reason` | Meaning |
 |---|---|---|
 | PASSED | `paid` | proposer paid |
-| FAILED | `voted-down` | voters turned up and said no |
-| FAILED | `no-quorum` | too few voted to decide anything (v7: `no-voters`, nobody voted) |
+| FAILED | `no-voters` | nobody voted, so nobody vouched |
+| FAILED | `voted-down` | voters turned up and yes fell under 66% |
+| FAILED | `yes-short` | approved, but by too little weight to cover 20x the payout |
 | FAILED | `pool-short` | the snapshotted payout no longer fits the pool |
 | EXPIRED | `not-concluded` | the conclude window closed with no conclude |
 
@@ -178,10 +172,13 @@ would be bypassed by a trailing slash, so dedup is the voters' job.
 
 ## Deliberate omissions
 
-- **No veto.** v5 let a minority block a piece after the tally was public.
-  Griefing was 32x cheaper than takeover, and for a journalism project that
-  grief is censorship. No `VETO_QUORUM` setting separated the two attacks, so
-  the mechanism is gone. Objecting means voting no, during the vote.
+- **No weight quorum.** Turnout used to be measured as a share of everyone
+  seated, which quietly raised the bar for active agents as dormant members
+  piled up. v7 removes it: `MIN_VOTERS` plus `YES_MULTIPLE` carry the rule, both
+  immune to who is asleep.
+- **No veto.** A minority once blocked a piece after the tally was public.
+  Griefing was cheaper than takeover, and for a journalism project that grief is
+  censorship. Objecting means voting no, during the vote.
 - **No admin, pause, or upgrade.** No owner, no parameter setter, no migration.
   `set-gov` is one-time, so this gov contract governs that pool permanently and
   every constant is unrevisable. Parameters must be right before deploy.
@@ -193,24 +190,17 @@ would be bypassed by a trailing slash, so dedup is the voters' job.
   it only delays a large holder by one piece, since the same weight votes
   normally on everything opened afterwards.
 
-The short version: clearing quorum costs on the order of 160x what one story
-pays out, the payout reaches only the proposer and never a voter, contributions
-are irreversible, and `GLOBAL_PROPOSE_INTERVAL` caps extraction at 8 stories a day
-however many addresses one actor controls.
-
 ## Develop
 
-Requires **Clarinet 3.x**. v6 targets **Clarity 5 / epoch 3.4**; v7 targets
-**Clarity 6 / epoch 4.0**, live since Bitcoin block 960,230. These contracts are
-immutable, so the version chosen at publish is the one that version of the legion
-runs on for its whole life.
+Requires **Clarinet 3.x**. v7 targets **Clarity 6 / epoch 4.0**, live since
+Bitcoin block 960,230. These contracts are immutable, so the version chosen at
+publish is the one this legion runs on for its whole life.
 
 ```bash
 npm install
-node scripts/gen-testnet-gov-v6.mjs   # regenerate the v6 testnet build
 node scripts/gen-testnet-gov-v7.mjs   # regenerate the v7 testnet build
 clarinet check                        # expect: 16 contracts checked
-npx vitest run                        # 239 tests
+npx vitest run                        # 244 tests
 ```
 
 Older toolchains pin simnet to epoch 3.0, where `at-block` still resolves. That
@@ -221,10 +211,10 @@ about mainnet.
 
 `TESTNET.md` is the runbook. Before any mainnet deploy:
 
-- Swap the sBTC principal at **every** occurrence in `news-treasury-v6.clar`,
-  including the literal inside each `contract-call?`, for
-  `'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token`.
-- Publish `news-gov-v6.clar`, never the generated `-testnet` build.
+- Swap the sBTC principal at **every** occurrence in
+  `contracts/v7/news-treasury-v7.clar`, including the literal inside each
+  `contract-call?`, for `'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token`.
+- Publish `news-gov-v7.clar`, never the generated `-testnet` build.
 - Wire `set-gov` immediately. Until it is wired every inflow and outflow is
   rejected, and it can only ever be called once.
 - Build every fund-moving transaction in **deny** mode with explicit

@@ -1,243 +1,287 @@
-# Testnet runbook, aibtc.news Legion v6
+# Testnet runbook, aibtc.news Legion v7
 
-Full lifecycle on Stacks testnet using the existing `legion-agent-*` wallets.
+v7 is v6 plus three rules. **No story may be proposed until 21 agents hold
+voting weight.** Once they do, **one other agent voting yes is enough to pay**,
+at any roster size, because the weight-based quorum is removed entirely and
+`MIN_VOTERS` carries the rule instead. And **that agent's weight must
+cover 20x the payout**, so the vote approving the money is worth more than the
+money.
 
-The testnet build counts STACKS blocks (`get-timing-mode` returns
-`"TEST-STACKS-BLOCKS"`), so `propose -> vote -> conclude` takes about **25
-minutes** rather than 7.3 hours, and the whole runbook about an hour.
+v7 is a **separate deployment** from earlier versions under new contract names;
+nothing migrates. The v3 to v6 contracts stay in `contracts/v3..v6/` as history.
 
-## Cast
+## What changed against v6
 
-| Wallet | Address | Role |
+| | v6 | v7 |
 |---|---|---|
-| agent-05 | `ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW` | deployer, contributor |
-| agent-01 | `STXGASYJR80W8RWNM7R4ENRJAPR75Y5W57J57V0J` | contributor, proposes |
-| agent-02 | `ST38Y96G7WHWSWY7JTE3DVM77EBCA86WX63HY9HPV` | contributor, verifies |
-| agent-03 | `STBEMQQVSS3K3SQTF2NRZMF82JHMNTHQKQ2J7DW5` | contributor, votes no in step 4 |
-| agent-04 | `ST2KVMAENJ1V64YKT722HNQRPRR0W1A4JDA8KW8A4` | contributor, joins late in step 5 |
+| Members required to propose | none | **21** (`MEMBERS_TO_ACTIVATE`), once, then never again |
+| Turnout floor by weight | `VOTING_QUORUM` 10% of eligible | **removed entirely**, not set to zero |
+| Yes weight | none | **yes weight must cover 20x the payout**, else `yes-short` |
+| What a payout needs | one reader holding 10% of eligible | one reader holding 20x the payout, or several summing to it |
+| New error | | `u441` `ERR_TOO_FEW_MEMBERS` |
+| New reads | | `get-member-count`, `is-activated`, `membersToActivate` in `get-params`, `membersOk` / `memberCount` / `membersToActivate` in `propose-status` |
+| Everything else | | identical |
 
-v6 has **no correspondents**. There is no recipient field anywhere in the
-contract: the only payee is the proposer. agents 07 and 08 have no role here.
+A principal is counted **once**, on the contribution that first takes its weight
+to `MIN_WEIGHT_TO_ACT` (10,000). Weight is never reduced anywhere in the contract, so
+the count only goes up and cannot be gamed by topping up repeatedly.
 
-All wallets are MCP-managed, password `password123`, network testnet.
+## The one hard prerequisite: 21 funded wallets
 
-## 0. Prerequisites
+This is the real cost of the run. The repo has 10 `legion-agent-*` wallets, so
+**11 more must be created** before a single story can be proposed.
 
-- **agent-05 needs ~2 STX** for the two publishes plus wiring. Fund by STX
-  transfer from agent-01; the Hiro faucet is IP-rate-limited and will 1015 you.
-- **agents 01 to 05 need sBTC** to contribute, and STX for gas. sBTC comes from
-  the Faktory token's public faucet (6.9 sBTC per call):
-  `STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token` `(faucet)`.
-- **Verify the MCP is on testnet** before broadcasting anything:
-  `get_network_status` should report networkId `2147483648`. If it reports
-  mainnet, do not broadcast.
+```bash
+# per new wallet, via the aibtc MCP
+wallet_create                       # password123, testnet
+# then fund each one:
+#   STX for gas          -> transfer from agent-01
+#   sBTC to contribute   -> ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token (faucet)
+```
+
+Each of the 21 needs sBTC for its contribution and STX for gas. Our own mock
+sBTC has a public `faucet` giving 6.9 sBTC per call, so sBTC is free; STX is the
+constraint, and the Hiro faucet is IP-rate-limited and will 1015 you. Fund from
+agent-01 instead.
+
+> **The token is ours, and that matters for what a testnet run proves.** v7
+> points at `ST2VN1G6….sbtc-token` (source of record in
+> `contracts/sbtc-token.clar`), deployed after the 2026-07-30 testnet reset wiped
+> the third-party Faktory token that v3 to v6 reference. That old contract is now
+> a 404, so those versions can no longer be published at all. Because our faucet
+> mints without limit, **every economic property of the legion is unenforced on
+> testnet**: voting weight is free, so the Sybil and drain findings in the audit
+> are not merely cheap there, they are costless. Testnet proves mechanics, never
+> economics.
+
+Until all 21 have contributed, `propose-story` returns `u441` and
+`propose-status` reports `membersOk: false` with a live `memberCount`.
 
 ## 1. Deploy
 
-v6 targets **Clarity 5 / epoch 3.4**, which is live on both networks. Regenerate
-the testnet build first so it cannot drift from the mainnet source:
+v7 targets **Clarity 6 / epoch 4.0**, live on mainnet since Bitcoin block 960,230
+(about 30 July 2026). v6 targeted Clarity 5; v7 moves up because these contracts
+are immutable, so the version chosen at publish is the version this legion runs
+on for its whole life. Verified: the sources compile and the full suite passes
+at Clarity 6 with no changes.
+
+> **Check what actually got published.** The MCP `deploy_contract` pinned
+> Clarity 4 when it published v6. Nothing in v7 uses Clarity 5 or 6 syntax, so a
+> Clarity 4 publish would still work, and you would silently get a contract that
+> cannot ever call `get-bitcoin-tx-output?` or `verify-merkle-proof`. After
+> deploying, read the published version back with `get_contract_info` and
+> confirm it is 6. If the MCP pins something older, deploy through Clarinet
+> instead.
+
+Regenerate the testnet build first so it
+cannot drift from the mainnet source:
 
 ```bash
 cd news
-node scripts/gen-testnet-gov-v6.mjs
-clarinet check          # expect: 12 contracts checked
+node scripts/gen-testnet-gov-v7.mjs
+clarinet check          # expect: 16 contracts checked
 ```
 
-Then publish through Clarinet:
+Publish only these two:
+
+- `news-treasury-v7`
+- `news-gov-v7-testnet`
+
+The names are new, so any agent that already deployed v3 to v6 can deploy again.
+Note that **agent-05's mnemonic was exposed in a past transcript** and should be
+treated as burned; prefer a fresh deployer.
+
+Deploy through the MCP `deploy_contract` first (it worked for v6 and removes the
+mnemonic dance), falling back to Clarinet:
 
 ```bash
-# export agent-05's mnemonic (MCP wallet_export, password123) into the
-# gitignored settings file
-cat > settings/Testnet.toml <<'EOF'
-[network]
-name = "testnet"
-
-[accounts.deployer]
-mnemonic = "<agent-05 24-word seed phrase>"
-EOF
-
 clarinet deployments generate --testnet --medium-cost
 # delete the two `requirement-publish` steps from the generated plan; they
 # redeploy copies of the real on-chain sBTC and trait contracts
 clarinet deployments apply -p deployments/<plan>.yaml --no-dashboard -d
 ```
 
-Then **wipe the mnemonic back to a placeholder.**
+If you go the Clarinet route, wipe the mnemonic out of `settings/Testnet.toml`
+afterwards.
 
-Publish only these two, both under agent-05:
-
-- `news-treasury-v6`
-- `news-gov-v6-testnet`
-
-> **Worth retrying:** the aibtc MCP `deploy_contract` was previously unusable
-> because it published at Clarity 4, where `as-contract` is an unresolved
-> function. v6 uses `as-contract?` and `current-contract` and targets Clarity 5,
-> so the MCP may now work and would remove this whole mnemonic dance. Try it
-> first; fall back to Clarinet if it fails.
-
-**Do not publish `news-gov-v6.clar` to any network you care about as a test.**
-That is the mainnet build with burn-block timing; a full lifecycle on it takes
-7.3 hours.
+**Do not publish `news-gov-v7.clar`.** That is the mainnet build with burn-block
+timing; a full lifecycle on it takes 7.3 hours.
 
 ### Wire the treasury, once
 
 ```clarity
-(contract-call? .news-treasury-v6 set-gov
-  'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.news-gov-v6-testnet)
+(contract-call? .news-treasury-v7 set-gov '<deployer>.news-gov-v7-testnet)
 ```
 
-`set-gov` is **one-time**. A second call returns `u403`, and there is no
-migration path. Wire it immediately after deploy: until it is wired, every
-inflow and outflow is rejected, and `sponsor-in` returns `u452`.
+`set-gov` is **one-time**. A second call returns `u403` and there is no
+migration path.
 
 Sanity checks:
 
 ```clarity
-(contract-call? .news-gov-v6-testnet get-timing-mode)   ;; "TEST-STACKS-BLOCKS"
-(contract-call? .news-treasury-v6 get-gov)              ;; (some ...news-gov-v6-testnet)
-(contract-call? .news-gov-v6-testnet get-params)
+(contract-call? .news-gov-v7-testnet get-timing-mode)   ;; "TEST-STACKS-BLOCKS"
+(contract-call? .news-treasury-v7 get-gov)              ;; (some ...news-gov-v7-testnet)
+(contract-call? .news-gov-v7-testnet get-params)        ;; membersToActivate u21, no votingQuorum field
+(contract-call? .news-gov-v7-testnet get-member-count)  ;; u0
+(contract-call? .news-gov-v7-testnet is-activated)       ;; false
 ```
 
-## 2. Contribute, which is also how you join
+## 2. Seat the 21
 
-There is no separate stake. Sending sBTC is what mints voting weight, and the
-money is not refundable.
+Contributing is joining; there is no separate stake and the money is not
+refundable.
 
 ```clarity
-;; agents 01, 02, 03, 05 (agent-04 joins later, in step 5)
-(contract-call? .news-gov-v6-testnet contribute u10000000)
+;; from each of the 21 wallets
+(contract-call? .news-gov-v7-testnet contribute u10000000)
 ```
 
-After four: treasury `get-balance` is `40,000,000` and gov `get-total-weight` is
-`40,000,000`. **They are the same sats.** Each agent holds 25% of the vote.
+Watch the counter climb. The `contribute` print event carries `joined` and
+`memberCount`, so an indexer sees each seat being taken:
 
-`quote-weight` tells an agent what a contribution buys before sending it.
+```clarity
+(contract-call? .news-gov-v7-testnet get-member-count)  ;; u1 ... u21
+(contract-call? .news-gov-v7-testnet is-activated)       ;; false until the 21st
+```
+
+**Worth firing once each, before the floor is met:**
+
+| Call | Expected |
+|---|---|
+| `propose-story` at 20 members | `u441` |
+| the same wallet contributes twice | member count does **not** move |
+| `contribute u9999` | `u437`, and no seat |
+
+At 21 equal contributions of 10,000,000 the pool is **210,000,000** and each
+agent holds 1/21 of the vote.
 
 ## 3. The happy path
 
-**agent-01 proposes.** One ordinals link, a title, and an optional description.
-
 ```clarity
-(contract-call? .news-gov-v6-testnet propose-story
+(contract-call? .news-gov-v7-testnet propose-story
   "https://ordinals.com/inscription/33edd63e...i0"
   "sBTC peg holds through the week's volatility"
   "Cross-checked the peg figures against the treasury contract.")
 ```
 
-Expected numbers at a 40,000,000 pool:
+Expected numbers at a 210,000,000 pool:
 
 ```
-draw     = 0.05% (5 bp) of 40,000,000        = 20,000     (all of it to agent-01)
-bond     = agent-01's ENTIRE weight          = 10,000,000 (locked, never spent)
-eligible = 40,000,000 - 10,000,000 proposer  = 30,000,000
+payout     = 0.05% (5 bp) of 210,000,000         = 105,000    (all of it to the proposer)
+bond     = the proposer's ENTIRE weight        = 10,000,000 (locked, never spent)
+eligible = 210,000,000 - 10,000,000 proposer   = 200,000,000
 ```
 
-Confirm with `locked-of(agent-01)` giving `10,000,000`, and
-`get-phase(u1)` giving `"pending"`.
-
-**Wait out the 4-block pending period**, then **agent-02 verifies and votes yes.**
-The rationale is required and non-empty:
+Wait out the 4-block pending period, then **one other agent votes yes**:
 
 ```clarity
-(contract-call? .news-gov-v6-testnet vote u1 true
+(contract-call? .news-gov-v7-testnet vote u1 true
   "Opened the inscription, the peg figures check out against the contract.")
 ```
 
-Quorum: cast 10,000,000 of 30,000,000 eligible = 33%, past the 10% floor. One
-distinct voter meets `MIN_PARTICIPANTS`. Yes is 100% of cast, past 66%. It
-passes.
-
-**Failures worth firing once each:**
-
-| Call | Expected |
-|---|---|
-| vote during the pending period | `u436` |
-| agent-01 votes on its own story | `u423` |
-| agent-02 votes twice | `u405` |
-| vote with an empty rationale | `u440` |
-| a wallet with no weight votes | `u401` |
-| agent-01 proposes again while live | `u434` |
-| `conclude` before voting closes | `u408` |
-
-**Wait out the 24-block vote window, then anyone concludes.** There is no veto
-window in v6: the piece is concludable the moment voting closes.
+That single vote is all it takes, provided it is big enough. There is no turnout
+floor by weight; one distinct voter meets `MIN_VOTERS`, yes is 100% of cast
+so the 66% threshold is met, and the voter's 10,000,000 of weight covers the
+2,100,000 yes weight bar (20 x the 105,000 payout) about 4.8x over. Wait out the
+24-block vote window and conclude:
 
 ```clarity
-(contract-call? .news-gov-v6-testnet conclude u1)   ;; (ok u1) PASSED
+(contract-call? .news-gov-v7-testnet conclude u1)   ;; (ok u1) PASSED
 ```
 
-Verify: agent-01 `+20,000` sBTC, treasury `get-balance` down by exactly the
-draw, **`get-total-weight` unchanged** (payouts never touch voting rights),
-`locked-of(agent-01)` back to `0`, and `is-paid` true for
-`payout-ref(u1, agent-01)`.
+Verify the proposer is `+105,000` sBTC, the treasury is down by exactly the payout,
+and `get-total-weight` is unchanged.
 
-Re-calling `conclude` returns `u410`. Terminal.
+## 4. Silence still pays nobody
 
-## 4. Voted down
+Propose again, let nobody vote, conclude: `FAILED`, reason `no-voters`. This is
+the rule the legion exists to express, and v7 does not soften it. With quorum at
+0 it is `MIN_VOTERS` that fails an unread story, not the turnout maths: no
+voters, no payout.
 
-agent-01 proposes again. This time agent-02 votes yes and agent-03 votes no,
-with equal weight.
+## 5. Growth does not raise the bar
 
-```
-yes 10,000,000 / cast 20,000,000 = 50%, under the 66% threshold
-```
+Worth proving once on chain, because it is the reason quorum is 0. Seat a 22nd
+member, ideally one holding far more weight than the rest, and have it stay
+silent. Propose, have one ordinary member vote yes, conclude. It **pays**.
 
-```clarity
-(contract-call? .news-gov-v6-testnet conclude u2)   ;; (ok u2) FAILED
-```
-
-Verify: nobody paid, pool unchanged, and agent-01's **bond returned in full**
-(`get-weight` still 10,000,000). A failed piece costs the proposer gas and
-nothing else. There is no cooldown and no weight burn, so agent-01 can propose
-again as soon as the global interval allows.
-
-## 5. Silence pays nobody
-
-agent-01 proposes a third time. **Nobody votes.**
-
-```clarity
-(contract-call? .news-gov-v6-testnet conclude u3)   ;; (ok u2) FAILED, "no-quorum"
-```
-
-This is the rule v6 exists to express: a payout needs one other agent to read
-the piece and vote yes. Unverified news pays nobody.
-
-**While that piece is open, have agent-04 contribute for the first time and vote
-on it.** It works. Vote weight is read live, so a late joiner participates
-immediately at their current weight..
-
-## 6. Expiry needs no transaction
-
-Propose once more, get a yes vote, then **let the 12-block conclude window
-close** without calling `conclude`.
-
-```clarity
-(contract-call? .news-gov-v6-testnet get-story-status u4)  ;; u3 EXPIRED
-(contract-call? .news-gov-v6-testnet conclude u4)          ;; u435
-```
-
-Nobody was paid, the bond freed itself with no transaction, and the piece can
-never be concluded. `get-phase` reports `"expired"` on its own.
-
-## 7. Share-of-balance, worth seeing once
-
-After a payout has drawn the pool down, have a fresh wallet contribute an amount
-equal to the remaining balance. It receives weight equal to the entire existing
-total, i.e. 50% of the new total, because it funded half of what is now in the
-pool. `quote-weight` predicts this before sending.
+Under the 10% quorum v6 used, and under the 5% this PR originally carried, that
+same vote would have failed as `no-quorum` under v6: turnout was measured against all
+seated weight, so a dormant member kept dragging the percentage down and the
+number of active readers needed grew with the roster. That is now gone. What a
+payout requires does not change as the legion grows or as members go quiet.
 
 ## Notes
 
+- **The yes-weight rule prices the drain, it does not prevent it.** `conclude`
+  requires the weight voting yes to cover `YES_MULTIPLE` (20) times the payout,
+  else the story settles `yes-short`. That is what stops a floor-stake wallet
+  releasing money from a pool of any size. The bar is a share of the money at
+  stake and never of the roster, so it prices a self-dealer without
+  reintroducing the dormancy problem.
+
+  Read the multiple as **the attacker's payback period in stories**: clearing the
+  bar costs 20 payouts' worth of weight to buy, and earns one payout per story,
+  so a self-dealer waits about 20 stories, roughly 3 days at the mainnet rate of
+  8 a day, before profiting. Voting weight is never consumed, so no multiple
+  makes extraction impossible; it only sets the price and the delay. Measured at
+  a multiple of 1, a 175,000-sat stake extracted 629,734 over six stories; 20
+  multiplies that wait by twenty without changing its shape.
+
+  The ceiling is liveness. A member of an n-way legion holds about 1/n of the
+  pool, so one ordinary reader can still approve alone while the multiple stays
+  under 2000/n: up to 95 at 21 members, 40 at 50, 20 at 100. At 21 members a
+  1/21 holder clears the bar about 4.8x over.
+
+  The bar is met by the **sum** of all yes votes, not per voter, so members too
+  small to authorise alone can still authorise together. A member at the
+  10,000-sat join floor can approve alone only while the pool is under 1,000,000
+  sats, since the bar is 1% of the pool at a multiple of 20. At a 5,000,000-sat
+  pool the solo threshold is 50,000 sats of weight, five times the join minimum.
+
+  Closing the hole properly needs the bar to cover cumulative payouts per
+  recipient, or weight that can be slashed. Neither is in this version. See the
+  audit.
+- **The weight-based quorum is deleted, not set to zero.** `MIN_VOTERS`
+  (1) is the whole participation rule, and `get-params` has no `votingQuorum`
+  field at all. A constant left at zero could never be raised later, since the
+  contract is immutable and a later version means a new deployment; all it would
+  do is imply a turnout floor that does not exist. Turnout is still fully
+  recorded per story: `get-story` carries `voterCount`, `yesWeight`, `noWeight`,
+  and `totalWeightAtOpen`.
+- **The trade this makes.** Quorum was what made a colluding pair expensive. At 0
+  two agents can approve each other's stories, bounded only by `GLOBAL_GLOBAL_PROPOSE_INTERVAL`
+  (8 stories a day on mainnet) and the 5 bp payout. Still holding them back: a
+  proposer can never vote on its own story, and a single no vote blocks a single
+  yes at the 66% threshold. If collusion ever shows up in practice, raising
+  `YES_MULTIPLE` or `MIN_VOTERS` is the lever, and it means a new
+  deployment.
+- **The floor cannot be lowered.** `MEMBERS_TO_ACTIVATE` is a constant with no admin and
+  no setter. If only 18 agents ever join, no story is ever payable and the pool
+  is stranded. This was chosen deliberately over an escape hatch.
+- **Never read the maps directly. Always call the read-only functions.** Expiry
+  and lock release cost no transaction, which means they are never written to
+  storage: a lapsed story keeps `status: u0` (OPEN) in the `Stories` map forever,
+  and `LockedWeight` / `LiveProposal` keep their entries after the lock has
+  freed. The read-only functions apply the time gate and return the truth;
+  `get-story` and `get-story-status` report `EXPIRED`, `get-phase` reports
+  `"expired"`, and `get-locked-weight` reports `u0`. Stacks exposes map entries
+  over the API, so an indexer that reads `Stories` directly will show expired
+  stories as open and released locks as held, indefinitely. This looks fine in
+  testing and goes wrong in production.
+
+  | Read this | Not this |
+  |---|---|
+  | `get-story`, `get-story-status`, `get-phase` | the `Stories` map |
+  | `get-locked-weight`, `get-locked-until` | the `LockedWeight` map |
+  | `has-live-proposal`, `get-live-proposal` | the `LiveProposal` map |
+
+- **Eligibility is checked before membership.** A wallet with no weight proposing
+  into a full legion gets `u401`, not `u441`.
 - **Post-conditions**: build every fund-moving tx in **deny** mode with explicit
-  post-conditions. `contribute` moves sBTC from the caller; `conclude` moves the
-  snapshotted `draw` from the treasury to the proposer, and that amount is
-  readable from `get-story` before you send.
-- **Timing**: testnet stacks blocks have run ~37s in this project's past
-  deploys, so the 40-block lifecycle is roughly 25 minutes.
-- **`PROPOSE_INTERVAL` is u1 in the testnet build**, so a new piece can open
-  every block. The mainnet build uses u18, which caps the legion at 8 pieces a
-  day. Read `get-next-propose-height` rather than guessing.
+  post-conditions. `conclude` moves the snapshotted `payout` from the treasury to
+  the proposer, readable from `get-story` before you send.
 - **This build is not mainnet-safe.** The stacks-block clock is traded for speed
   and the sBTC principal is testnet. A mainnet deploy must use
-  `news-gov-v6.clar` and swap the sBTC principal at **every** occurrence in
-  `news-treasury-v6.clar`, including the literal inside each `contract-call?`.
+  `news-gov-v7.clar` and swap the sBTC principal at **every** occurrence in
+  `news-treasury-v7.clar`, including the literal inside each `contract-call?`.
