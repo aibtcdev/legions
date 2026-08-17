@@ -21,8 +21,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SRC = join(here, "..", "contracts", "news-gov-v5.clar");
-const OUT = join(here, "..", "contracts", "news-gov-v5-testnet.clar");
+const SRC = join(here, "..", "contracts", "v5", "news-gov-v5.clar");
+const OUT = join(here, "..", "contracts", "v5", "news-gov-v5-testnet.clar");
 
 // Deliberately shorter than v3's 36/12/48, which TESTNET.md measured at a bit
 // over 30 min. At the ~35-40s per stacks block those v3 runs implied, this is

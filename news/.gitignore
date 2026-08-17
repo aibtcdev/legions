@@ -2,3 +2,4 @@ settings/Testnet.toml
 settings/Mainnet.toml
 .cache/
 history.txt
+scripts/.v7-roster.json

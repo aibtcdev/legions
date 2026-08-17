@@ -13,46 +13,46 @@ contract_id = 'STV9K21TBFAK4KNRJXF5DFP8N7W46G4V9RJ5XDY2.sbtc-token'
 contract_id = 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token'
 
 [contracts.news-treasury]
-path = 'contracts/news-treasury.clar'
+path = 'contracts/v3/news-treasury.clar'
 clarity_version = 3
 epoch = 3.0
 
 [contracts.news-gov]
-path = 'contracts/news-gov.clar'
+path = 'contracts/v3/news-gov.clar'
 clarity_version = 3
 epoch = 3.0
 
 [contracts.news-treasury-v4]
-path = 'contracts/news-treasury-v4.clar'
+path = 'contracts/v4/news-treasury-v4.clar'
 clarity_version = 3
 epoch = 3.0
 
 [contracts.news-gov-v4]
-path = 'contracts/news-gov-v4.clar'
+path = 'contracts/v4/news-gov-v4.clar'
 clarity_version = 3
 epoch = 3.0
 
 # Generated from news-gov-v4.clar by scripts/gen-testnet-gov.mjs. Counts stacks
 # blocks with a ~30 min lifecycle for fast testnet iteration. Do not edit by hand.
 [contracts.news-gov-v4-testnet]
-path = 'contracts/news-gov-v4-testnet.clar'
+path = 'contracts/v4/news-gov-v4-testnet.clar'
 clarity_version = 3
 epoch = 3.0
 
 # v5 = v4 + weight-less sponsor-in deposit + payout raised to 0.05% (5 bp).
 [contracts.news-treasury-v5]
-path = 'contracts/news-treasury-v5.clar'
+path = 'contracts/v5/news-treasury-v5.clar'
 clarity_version = 3
 epoch = 3.0
 
 [contracts.news-gov-v5]
-path = 'contracts/news-gov-v5.clar'
+path = 'contracts/v5/news-gov-v5.clar'
 clarity_version = 3
 epoch = 3.0
 
 # Generated from news-gov-v5.clar by scripts/gen-testnet-gov.mjs. Do not edit by hand.
 [contracts.news-gov-v5-testnet]
-path = 'contracts/news-gov-v5-testnet.clar'
+path = 'contracts/v5/news-gov-v5-testnet.clar'
 clarity_version = 3
 epoch = 3.0
 
@@ -61,19 +61,19 @@ epoch = 3.0
 # rationale on every vote. The treasury is byte-for-byte v5's behaviour; it is
 # redeployed only because set-gov is one-time.
 [contracts.news-treasury-v6]
-path = 'contracts/news-treasury-v6.clar'
+path = 'contracts/v6/news-treasury-v6.clar'
 clarity_version = 5
 epoch = 3.4
 
 [contracts.news-gov-v6]
-path = 'contracts/news-gov-v6.clar'
+path = 'contracts/v6/news-gov-v6.clar'
 clarity_version = 5
 epoch = 3.4
 
 # Generated from news-gov-v6.clar by scripts/gen-testnet-gov-v6.mjs. Do not edit
 # by hand. Separate generator from v5's: v6 has no VETO_WINDOW to substitute.
 [contracts.news-gov-v6-testnet]
-path = 'contracts/news-gov-v6-testnet.clar'
+path = 'contracts/v6/news-gov-v6-testnet.clar'
 clarity_version = 5
 epoch = 3.4
 
@@ -84,19 +84,19 @@ epoch = 3.4
 # that agent's weight to cover 20x the payout. The treasury is byte-for-byte
 # v6's behaviour; it is redeployed only because set-gov is one-time.
 [contracts.news-treasury-v7]
-path = 'contracts/news-treasury-v7.clar'
+path = 'contracts/v7/news-treasury-v7.clar'
 clarity_version = 6
 epoch = 4.0
 
 [contracts.news-gov-v7]
-path = 'contracts/news-gov-v7.clar'
+path = 'contracts/v7/news-gov-v7.clar'
 clarity_version = 6
 epoch = 4.0
 
 # Generated from news-gov-v7.clar by scripts/gen-testnet-gov-v7.mjs. Do not edit
 # by hand.
 [contracts.news-gov-v7-testnet]
-path = 'contracts/news-gov-v7-testnet.clar'
+path = 'contracts/v7/news-gov-v7-testnet.clar'
 clarity_version = 6
 epoch = 4.0
 

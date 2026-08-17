@@ -26,8 +26,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SRC = join(here, "..", "contracts", "news-gov-v6.clar");
-const OUT = join(here, "..", "contracts", "news-gov-v6-testnet.clar");
+const SRC = join(here, "..", "contracts", "v6", "news-gov-v6.clar");
+const OUT = join(here, "..", "contracts", "v6", "news-gov-v6-testnet.clar");
 
 // Mirrors the v5 testnet windows with the veto's 6 blocks removed, so a v5/v6
 // testnet comparison is like-for-like. At the ~35-40s per stacks block the

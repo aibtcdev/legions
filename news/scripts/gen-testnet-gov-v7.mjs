@@ -26,8 +26,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const SRC = join(here, "..", "contracts", "news-gov-v7.clar");
-const OUT = join(here, "..", "contracts", "news-gov-v7-testnet.clar");
+const SRC = join(here, "..", "contracts", "v7", "news-gov-v7.clar");
+const OUT = join(here, "..", "contracts", "v7", "news-gov-v7-testnet.clar");
 
 // Identical to the v6 testnet windows, so a v6/v7 testnet comparison is
 // like-for-like and only the membership floor differs. At the ~35-40s per stacks block the
