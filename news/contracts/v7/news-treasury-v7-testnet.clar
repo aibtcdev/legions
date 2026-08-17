@@ -1,10 +1,10 @@
-;; news-treasury-v7
+;; news-treasury-v7-testnet
 ;;
 ;; Behaviour is byte-for-byte v6's. It is redeployed only because `set-gov` is
 ;; one-time, so a new gov contract needs a new treasury to wire itself into.
 
-;; Mainnet sBTC. The -testnet build swaps this for the mock token.
-(define-constant SBTC 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token)
+;; Mock sBTC on testnet. Generated from news-treasury-v7.clar.
+(define-constant SBTC 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token)
 
 (define-constant DEPLOYER tx-sender)
 
@@ -96,7 +96,7 @@
   (begin
     (asserts! (is-gov contract-caller) ERR_UNAUTHORIZED)
     (asserts! (> amount u0) ERR_ZERO_AMOUNT)
-    (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer amount tx-sender current-contract none))
+    (try! (contract-call? 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token transfer amount tx-sender current-contract none))
     (var-set Balance (+ (var-get Balance) amount))
     (var-set WeightedBalance (+ (var-get WeightedBalance) amount))
     (print {
@@ -120,7 +120,7 @@
     (asserts! (is-some (var-get Gov)) ERR_NOT_WIRED)
     (asserts! (>= amount MIN_SPONSOR) ERR_BELOW_MIN)
     (asserts! (> (len name) u0) ERR_EMPTY_NAME)
-    (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer amount tx-sender current-contract none))
+    (try! (contract-call? 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token transfer amount tx-sender current-contract none))
     (var-set Balance (+ (var-get Balance) amount))
     (print {
       event: "sponsor-in",
@@ -159,8 +159,8 @@
     (var-set Balance (- bal amount))
     (var-set WeightedBalance (- weighted (/ (* weighted amount) bal)))
 
-    (try! (as-contract? ((with-ft 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token "sbtc-token" amount))
-      (try! (contract-call? 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token transfer amount tx-sender recipient none))))
+    (try! (as-contract? ((with-ft 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token "sbtc-token" amount))
+      (try! (contract-call? 'ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token transfer amount tx-sender recipient none))))
 
     (print {
       event: "execute-payout",

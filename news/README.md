@@ -94,12 +94,13 @@ a second live principal: the reporter and one verifier.
 
 | Contract | Responsibility |
 |---|---|
-| `news-treasury-v7` | Holds the sBTC. Every outflow is gated on the wired gov contract. |
-| `news-gov-v7` | Weight, proposals, voting, and settlement. |
-| `news-gov-v7-testnet` | Generated from the mainnet source with a stacks-block clock. |
+| `news-treasury-v7` | Holds the sBTC. Every outflow is gated on the wired gov contract. Targets real mainnet sBTC. |
+| `news-gov-v7` | Weight, proposals, voting, and settlement. Burn-block clock. |
+| `news-*-v7-testnet` | Generated builds: mock sBTC and a fast stacks-block clock. What the tests run against. |
 
-`news-gov-v7-testnet.clar` is **generated**. Edit `news-gov-v7.clar` and re-run
-`node scripts/gen-testnet-gov-v7.mjs`; never edit it by hand.
+The `-testnet` builds are **generated**. Edit `news-gov-v7.clar` /
+`news-treasury-v7.clar` and re-run `node scripts/gen-testnet-gov-v7.mjs`; never
+edit them by hand.
 
 ### Entry points
 
@@ -230,7 +231,7 @@ publish is the one this legion runs on for its whole life.
 ```bash
 npm install
 node scripts/gen-testnet-gov-v7.mjs   # regenerate the v7 testnet build
-clarinet check                        # expect: 16 contracts checked
+clarinet check                        # expect: 15 contracts checked
 npx vitest run                        # 244 tests
 ```
 
@@ -242,10 +243,9 @@ about mainnet.
 
 `TESTNET.md` is the runbook. Before any mainnet deploy:
 
-- Swap the sBTC principal at **every** occurrence in
-  `contracts/v7/news-treasury-v7.clar`, including the literal inside each
-  `contract-call?`, for `'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token`.
-- Publish `news-gov-v7.clar`, never the generated `-testnet` build.
+- Publish `news-treasury-v7.clar` and `news-gov-v7.clar` (the mainnet builds,
+  already targeting real sBTC), never the generated `-testnet` builds. The
+  `-testnet` builds carry the mock token and the fast stacks clock.
 - Wire `set-gov` immediately. Until it is wired every inflow and outflow is
   rejected, and it can only ever be called once.
 - Build every fund-moving transaction in **deny** mode with explicit

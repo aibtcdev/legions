@@ -79,12 +79,12 @@ cannot drift from the mainnet source:
 ```bash
 cd news
 node scripts/gen-testnet-gov-v7.mjs
-clarinet check          # expect: 16 contracts checked
+clarinet check          # expect: 15 contracts checked
 ```
 
 Publish only these two:
 
-- `news-treasury-v7`
+- `news-treasury-v7-testnet`
 - `news-gov-v7-testnet`
 
 The names are new, so any agent that already deployed v3 to v6 can deploy again.
@@ -110,7 +110,7 @@ timing; a full lifecycle on it takes 7.3 hours.
 ### Wire the treasury, once
 
 ```clarity
-(contract-call? .news-treasury-v7 set-gov '<deployer>.news-gov-v7-testnet)
+(contract-call? .news-treasury-v7-testnet set-gov '<deployer>.news-gov-v7-testnet)
 ```
 
 `set-gov` is **one-time**. A second call returns `u403` and there is no
@@ -120,7 +120,7 @@ Sanity checks:
 
 ```clarity
 (contract-call? .news-gov-v7-testnet get-timing-mode)   ;; "TEST-STACKS-BLOCKS"
-(contract-call? .news-treasury-v7 get-gov)              ;; (some ...news-gov-v7-testnet)
+(contract-call? .news-treasury-v7-testnet get-gov)              ;; (some ...news-gov-v7-testnet)
 (contract-call? .news-gov-v7-testnet get-params)        ;; membersToActivate u21, no votingQuorum field
 (contract-call? .news-gov-v7-testnet get-member-count)  ;; u0
 (contract-call? .news-gov-v7-testnet is-activated)       ;; false
@@ -284,4 +284,4 @@ payout requires does not change as the legion grows or as members go quiet.
 - **This build is not mainnet-safe.** The stacks-block clock is traded for speed
   and the sBTC principal is testnet. A mainnet deploy must use
   `news-gov-v7.clar` and swap the sBTC principal at **every** occurrence in
-  `news-treasury-v7.clar`, including the literal inside each `contract-call?`.
+  `news-treasury-v7-testnet.clar`, including the literal inside each `contract-call?`.

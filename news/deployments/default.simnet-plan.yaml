@@ -135,14 +135,9 @@ plan:
   - id: 2
     transactions:
     - transaction-type: emulated-contract-publish
-      contract-name: news-treasury-v7
+      contract-name: news-treasury-v7-testnet
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/v7/news-treasury-v7.clar
-      clarity-version: 6
-    - transaction-type: emulated-contract-publish
-      contract-name: news-gov-v7
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/v7/news-gov-v7.clar
+      path: contracts/v7/news-treasury-v7-testnet.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: news-gov-v7-testnet

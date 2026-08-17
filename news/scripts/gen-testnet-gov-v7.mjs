@@ -28,6 +28,10 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const SRC = join(here, "..", "contracts", "v7", "news-gov-v7.clar");
 const OUT = join(here, "..", "contracts", "v7", "news-gov-v7-testnet.clar");
+const TRE_SRC = join(here, "..", "contracts", "v7", "news-treasury-v7.clar");
+const TRE_OUT = join(here, "..", "contracts", "v7", "news-treasury-v7-testnet.clar");
+const MAINNET_SBTC = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
+const TESTNET_SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
 
 // Identical to the v6 testnet windows, so a v6/v7 testnet comparison is
 // like-for-like and only the membership floor differs. At the ~35-40s per stacks block the
@@ -103,7 +107,22 @@ src = sub(
   "timing-mode",
 );
 
+// 4. The testnet gov calls the testnet treasury.
+src = src.replaceAll(".news-treasury-v7", ".news-treasury-v7-testnet");
+
 writeFileSync(OUT, BANNER + src);
+
+// The testnet treasury: the mainnet source with the mock sBTC swapped in.
+let tre = readFileSync(TRE_SRC, "utf8");
+if (!tre.includes(MAINNET_SBTC)) {
+  throw new Error("gen-testnet-v7: treasury source has no mainnet sBTC; nothing to swap.");
+}
+tre = tre.replaceAll(MAINNET_SBTC, TESTNET_SBTC)
+  .replace(";; news-treasury-v7", ";; news-treasury-v7-testnet")
+  .replace(";; Mainnet sBTC. The -testnet build swaps this for the mock token.",
+           ";; Mock sBTC on testnet. Generated from news-treasury-v7.clar.");
+writeFileSync(TRE_OUT, tre);
+console.log(`Wrote ${TRE_OUT}`);
 console.log(
   `Wrote ${OUT}\n  windows: delay ${TESTNET.VOTE_DELAY} / vote ${TESTNET.VOTE_WINDOW} / conclude ${TESTNET.CONCLUDE_WINDOW} / interval ${TESTNET.GLOBAL_PROPOSE_INTERVAL} (stacks blocks)`,
 );

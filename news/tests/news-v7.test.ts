@@ -7,15 +7,15 @@ import { Cl } from "@stacks/transactions";
 // quorum removed, and a yes-weight rule in its place. Everything else is v6 and is
 // already covered by news-v6.test.ts, so
 // this suite exercises the floor, the counter behind it, and what a payout
-// requires now that turnout is a headcount. Timing still counts BURN blocks
-// (get-timing-mode == "PROD-BURN"), so windows are crossed with
-// simnet.mineEmptyBurnBlocks().
+// requires now that turnout is a headcount. Runs against the -testnet build,
+// which counts STACKS blocks, so windows are crossed with
+// simnet.mineEmptyBlocks().
 const accounts = simnet.getAccounts();
 const deployer = accounts.get("deployer")!;
 const outsider = accounts.get("wallet_5")!;
 
-const TREASURY = "news-treasury-v7";
-const GOV = "news-gov-v7";
+const TREASURY = "news-treasury-v7-testnet";
+const GOV = "news-gov-v7-testnet";
 const govPrincipal = `${deployer}.${GOV}`;
 
 // Our own mock sBTC on testnet, pulled into simnet via [[project.requirements]].
@@ -23,12 +23,12 @@ const govPrincipal = `${deployer}.${GOV}`;
 const SBTC = "ST2VN1G6EBXPMMAJKCSY1HR50YQCVFSK68KKP9SKW.sbtc-token";
 
 // Must match news-gov-v7.clar (burn blocks).
-const VOTE_DELAY = 2;
-const VOTE_WINDOW = 30;
+const VOTE_DELAY = 4;
+const VOTE_WINDOW = 24;
 const CONCLUDE_WINDOW = 12;
 const MIN_WEIGHT_TO_ACT = 10_000;
 const MIN_JOIN_SATS = 10_000;
-const GLOBAL_PROPOSE_INTERVAL = 18;
+const GLOBAL_PROPOSE_INTERVAL = 1;
 const MEMBERS_TO_ACTIVATE = 21;
 // No turnout floor by weight at all. This headcount is the participation rule.
 const MIN_VOTERS = 1;
@@ -198,17 +198,17 @@ function storyReason(id: number): string {
 }
 
 function mineToVotingOpen() {
-  simnet.mineEmptyBurnBlocks(VOTE_DELAY);
+  simnet.mineEmptyBlocks(VOTE_DELAY);
 }
 
 function mineToConcludable() {
-  simnet.mineEmptyBurnBlocks(VOTE_DELAY + VOTE_WINDOW);
+  simnet.mineEmptyBlocks(VOTE_DELAY + VOTE_WINDOW);
 }
 
 /** From a fresh propose: burn past the conclude window, so the story expires
  *  and the bond frees itself with no transaction. */
 function mineToLapsed() {
-  simnet.mineEmptyBurnBlocks(VOTE_DELAY + VOTE_WINDOW + CONCLUDE_WINDOW);
+  simnet.mineEmptyBlocks(VOTE_DELAY + VOTE_WINDOW + CONCLUDE_WINDOW);
 }
 
 /** Wire the treasury and seat `n` equal-weight members. */
@@ -335,7 +335,7 @@ describe("one reader is enough", () => {
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
 
     const paidBefore = sbtcOf(proposer);
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
 
     expect(storyStatus(1)).toBe(PASSED);
@@ -360,7 +360,7 @@ describe("one reader is enough", () => {
     // would have failed. Nothing measures that ratio any more.
     expect((cast * 100n) / BigInt(POOL_AT_21 - CONTRIB)).toBe(5n);
 
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
@@ -379,7 +379,7 @@ describe("one reader is enough", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, false).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
     expect(storyReason(1)).toBe("voted-down");
     expect(BigInt(poolOf())).toBe(BigInt(POOL_AT_21));
@@ -414,7 +414,7 @@ describe("the member count can only ever climb", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
 
     // Getting paid moves sBTC, never voting rights.
@@ -444,7 +444,7 @@ describe("the member count can only ever climb", () => {
     legionOf(MEMBERS_TO_ACTIVATE);
     expect(propose(proposer).result).toBeOk(Cl.uint(1));
     // A second agent opens its own story once the global slot reopens.
-    simnet.mineEmptyBurnBlocks(GLOBAL_PROPOSE_INTERVAL);
+    simnet.mineEmptyBlocks(GLOBAL_PROPOSE_INTERVAL);
     expect(propose(voter1).result).toBeOk(Cl.uint(2));
     mineToVotingOpen();
 
@@ -462,9 +462,9 @@ describe("the member count can only ever climb", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
-    simnet.mineEmptyBurnBlocks(GLOBAL_PROPOSE_INTERVAL);
+    simnet.mineEmptyBlocks(GLOBAL_PROPOSE_INTERVAL);
     expect(propose(voter1).result).toBeOk(Cl.uint(2));
     mineToLapsed();
 
@@ -495,7 +495,7 @@ describe("yes weight must cover the payout", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(small, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
 
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
     expect(storyReason(1)).toBe("yes-short");
@@ -510,7 +510,7 @@ describe("yes weight must cover the payout", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(small, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     conclude(1);
     // Unanimous support, so it was not voted down. The approvers were too small.
     const story = dump("get-story", [Cl.uint(1)]);
@@ -533,7 +533,7 @@ describe("yes weight must cover the payout", () => {
     // headroom the multiple was chosen for.
     expect(yesWeight / bar).toBeGreaterThanOrEqual(4n);
 
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
@@ -550,7 +550,7 @@ describe("yes weight must cover the payout", () => {
     mineToVotingOpen();
     expect(vote(a, 1, true).result).toBeOk(Cl.bool(true));
     expect(vote(b, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     // 2,400,000 combined against a bar of 20 x ~106,200.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
@@ -565,7 +565,7 @@ describe("yes weight must cover the payout", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(a, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     // 1,200,000 alone is under the ~2,124,000 bar.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
     expect(storyReason(1)).toBe("yes-short");
@@ -586,7 +586,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     // 10M cast of 210M eligible = 4.76%, which floored to 4 and failed at 5.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
     expect(storyReason(1)).toBe("paid");
@@ -597,7 +597,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
     expect(propose().result).toBeOk(Cl.uint(1));
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });
 
@@ -619,7 +619,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
     // 10M of 400M eligible = 2%, less than half the old floor.
     expect((cast * 100n) / num(story, "totalWeightAtOpen")).toBe(2n);
 
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
     expect(storyReason(1)).toBe("paid");
   });
@@ -630,7 +630,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
     mineToVotingOpen();
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, 1, false).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     // 50% of cast, under the 66% threshold. Quorum was never what stopped this.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(FAILED)));
     expect(storyReason(1)).toBe("voted-down");
@@ -643,7 +643,7 @@ describe("the bar does not move as the legion grows or goes quiet", () => {
     expect(vote(voter1, 1, true).result).toBeOk(Cl.bool(true));
     expect(vote(voter2, 1, true).result).toBeOk(Cl.bool(true));
     expect(vote(MEMBERS[3], 1, false).result).toBeOk(Cl.bool(true));
-    simnet.mineEmptyBurnBlocks(VOTE_WINDOW);
+    simnet.mineEmptyBlocks(VOTE_WINDOW);
     // 20M yes of 30M cast = 66%, exactly the threshold.
     expect(conclude(1).result).toBeOk(Cl.uint(Number(PASSED)));
   });

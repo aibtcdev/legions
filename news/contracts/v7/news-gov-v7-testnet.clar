@@ -319,13 +319,13 @@
 
 ;; What a story would pay if proposed now
 (define-read-only (quote-payout)
-  (/ (* (contract-call? .news-treasury-v7 get-balance) PAYOUT_BPS) u10000)
+  (/ (* (contract-call? .news-treasury-v7-testnet get-balance) PAYOUT_BPS) u10000)
 )
 
 ;; Weight a contribution would mint now
 (define-read-only (quote-weight (amount uint))
   (let (
-      (bal (contract-call? .news-treasury-v7 get-weighted-balance))
+      (bal (contract-call? .news-treasury-v7-testnet get-weighted-balance))
       (total (var-get TotalWeight))
     )
     (if (or (is-eq total u0) (is-eq bal u0))
@@ -338,7 +338,7 @@
 ;; Every propose precondition
 (define-read-only (propose-status (who principal))
   (let (
-      (pool (contract-call? .news-treasury-v7 get-balance))
+      (pool (contract-call? .news-treasury-v7-testnet get-balance))
       (weight (get-weight who))
       (payout (/ (* pool PAYOUT_BPS) u10000))
       (nextHeight (get-next-propose-height))
@@ -380,7 +380,7 @@
 ;; Send sBTC to the pool and receive voting weight
 (define-public (contribute (amount uint))
   (let (
-      (balBefore (contract-call? .news-treasury-v7 get-weighted-balance))
+      (balBefore (contract-call? .news-treasury-v7-testnet get-weighted-balance))
       (total (var-get TotalWeight))
       (minted (if (or (is-eq total u0) (is-eq balBefore u0))
         amount
@@ -395,7 +395,7 @@
     )
     (asserts! (>= amount MIN_JOIN_SATS) ERR_BELOW_MIN_JOIN_SATS)
     (asserts! (> minted u0) ERR_DUST_CONTRIBUTION)
-    (try! (contract-call? .news-treasury-v7 contribute-in amount))
+    (try! (contract-call? .news-treasury-v7-testnet contribute-in amount))
     (map-set Weights tx-sender next)
     (var-set TotalWeight (+ total minted))
     (var-set MemberCount (+ (var-get MemberCount) joins))
@@ -420,7 +420,7 @@
     (description (string-ascii 512))
   )
   (let (
-      (pool (contract-call? .news-treasury-v7 get-balance))
+      (pool (contract-call? .news-treasury-v7-testnet get-balance))
       (proposerWeight (get-weight tx-sender))
       (voteEnd (+ stacks-block-height VOTE_DELAY VOTE_WINDOW))
       (lapseAt (+ voteEnd CONCLUDE_WINDOW))
@@ -547,7 +547,7 @@
       ;; Yes weight must cover YES_MULTIPLE times the payout it releases.
       (yesMet (>= (get yesWeight story) (* (get payout story) YES_MULTIPLE)))
       (payout (get payout story))
-      (poolShort (> payout (contract-call? .news-treasury-v7 get-balance)))
+      (poolShort (> payout (contract-call? .news-treasury-v7-testnet get-balance)))
     )
     (asserts! (is-eq (get status story) STATUS_OPEN) ERR_PROPOSAL_CONCLUDED)
     (asserts! (>= stacks-block-height (get voteEnd story)) ERR_VOTE_STILL_OPEN)
@@ -613,7 +613,7 @@
             (map-set Stories proposalId
               (merge story { status: STATUS_PASSED, reason: "paid" }))
             (unwrap!
-              (contract-call? .news-treasury-v7 execute-payout
+              (contract-call? .news-treasury-v7-testnet execute-payout
                 proposer payout (payout-ref proposalId proposer))
               ERR_PAYOUT_FAILED
             )
