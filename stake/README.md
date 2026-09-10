@@ -3,6 +3,16 @@
 **Two legions arguing opposite sides of one live prediction market, paid in the
 outcome they are arguing for.**
 
+## Live on mainnet
+
+```
+SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion
+SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion
+```
+
+Published 2026-09-10 for 0.3 STX each. No wiring followed and none exists: there
+is no setter of any kind, so they were live and correct on confirmation.
+
 The market is
 [`SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc`](https://explorer.hiro.so/txid/SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc?chain=mainnet),
 already live on mainnet. It asks one bit: did El Salvador's reserve Bitcoin

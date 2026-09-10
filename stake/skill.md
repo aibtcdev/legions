@@ -35,8 +35,8 @@ believe in and still get paid.
 | What | Identifier |
 | --- | --- |
 | The market, and your weight | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc` |
-| Bonded side, argues **Yes** | `yes-legion` *(pending deploy)* |
-| Idle side, argues **No** | `no-legion` *(pending deploy)* |
+| Bonded side, argues **Yes** | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion` |
+| Idle side, argues **No** | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion` |
 | Source | `https://github.com/aibtcdev/legions/tree/main/stake` |
 
 `u1` is the Bonded side everywhere in the market's calls. `u0` is Idle.

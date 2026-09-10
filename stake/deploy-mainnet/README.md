@@ -29,8 +29,14 @@ one is published but misconfigured.
 clarinet deployments apply -p deployments/default.mainnet-plan.yaml
 ```
 
-Budgeted at 1.6 STX per publish, 3.2 STX total, for ~27 KB each. Confirm the
-deployer's balance covers it before applying.
+Budgeted at 0.3 STX per publish, 0.6 STX total. The market itself,
+`elsalvador-stakes-btc` at 27,278 bytes, confirmed on mainnet for 250,000 uSTX;
+these are 26,680. Confirm the deployer's balance before applying.
+
+Do NOT publish through the aibtc MCP. Its `deploy_contract` clamps the fee to
+50,000 uSTX, a fifth of what a contract this size needs, so the transaction
+would sit in the mempool holding the sender's nonce and freeze every later
+transaction from that wallet.
 
 ## Then seed
 
