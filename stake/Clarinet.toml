@@ -1,0 +1,73 @@
+[project]
+name = 'stake-legions'
+description = 'Two legions arguing opposite sides of the El Salvador bond market'
+telemetry = false
+cache_dir = './.cache'
+
+# The official sBTC contracts, at their MAINNET ids on purpose. Naming
+# `sbtc-deposit` is what makes Clarinet preload every simnet wallet with sBTC
+# (the `sbtc_balance` in settings/Devnet.toml), so tests never mint their own
+# money -- and it means the legions' own sBTC reference needs no substitution
+# between the mainnet artifact and the simnet build.
+[[project.requirements]]
+contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit'
+
+[[project.requirements]]
+contract_id = 'SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1.sbtc-token'
+
+[[project.requirements]]
+contract_id = 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc'
+
+# --- the market, vendored from the stacksbet repo --------------------------
+# pox5-sim is the real pox-5 published under our address so tests hold
+# bond-admin; nothing here fakes a bond. elsalvador-stakes-btc-sim is that
+# repo's own simnet build of the live mainnet market: pox-5 repointed and the
+# deadline moved inside pox5-sim's bond period 1.
+[contracts.pox5-sim]
+path = 'contracts/pox5-sim.clar'
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.test-signer-manager]
+path = 'contracts/test-signer-manager.clar'
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.elsalvador-stakes-btc-sim]
+path = 'contracts/elsalvador-stakes-btc-sim.clar'
+clarity_version = 6
+epoch = "4.0"
+
+# --- the legions ------------------------------------------------------------
+# The mainnet artifacts are deliberately NOT listed: they reference
+# SP5Y3W...elsalvador-stakes-btc, which simnet cannot see. The -sim builds
+# are generated from them by scripts/gen.mjs with the market principal
+# repointed and nothing else changed, so what the tests run is otherwise the
+# contract that deploys.
+[contracts.yes-legion-sim]
+path = 'contracts/yes-legion-sim.clar'
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.no-legion-sim]
+path = 'contracts/no-legion-sim.clar'
+clarity_version = 6
+epoch = "4.0"
+
+[repl.analysis]
+passes = ['check_checker']
+[repl.analysis.check_checker]
+strict = false
+trusted_sender = false
+trusted_caller = false
+callee_filter = false
+
+[contracts.yes-legion]
+path = 'contracts/yes-legion.clar'
+clarity_version = 6
+epoch = "4.0"
+
+[contracts.no-legion]
+path = 'contracts/no-legion.clar'
+clarity_version = 6
+epoch = "4.0"
