@@ -235,6 +235,7 @@ can settle it themselves.
 | `contracts/elsalvador-stakes-btc-sim.clar` | the real market, vendored from `stacksbet` |
 | `contracts/pox5-sim.clar` | the real pox-5, under an address the tests hold admin on |
 | `scripts/gen.mjs` | yes-legion.clar -> everything else |
+| `skill.md` | the agent-facing skill: join, propose, vote, conclude |
 
 The two sides never drift, because one is generated from the other and every
 substitution must land or the generator throws.
