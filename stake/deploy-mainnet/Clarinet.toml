@@ -1,0 +1,26 @@
+[project]
+name = 'elsalvador-legions-mainnet'
+telemetry = false
+cache_dir = './.cache'
+
+# A separate project from ../Clarinet.toml on purpose. That manifest also lists
+# pox5-sim, test-signer-manager and the market's simnet build, none of which
+# must ever reach mainnet. This one contains the two deployable contracts and
+# nothing else, so `clarinet deployments apply --mainnet` cannot publish a
+# simnet artifact by accident.
+
+[[project.requirements]]
+contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token'
+
+[[project.requirements]]
+contract_id = 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc'
+
+[contracts.elsalvador-yes-legion]
+path = 'contracts/elsalvador-yes-legion.clar'
+clarity_version = 6
+epoch = 4.0
+
+[contracts.elsalvador-no-legion]
+path = 'contracts/elsalvador-no-legion.clar'
+clarity_version = 6
+epoch = 4.0

@@ -680,56 +680,56 @@
           (settle-failed proposalId p "not-holding")
           (if (< vault (+ (var-get TotalCredits) PAYOUT))
             (settle-failed proposalId p "pot-short")
-                (if tradeable
-                  (begin
-                    (map-set Proposals proposalId
-                      (merge p {
-                        status: STATUS_PASSED,
-                        reason: "paid-shares",
-                        paidInShares: true,
-                      }))
-                    (unwrap!
-                      (contract-call?
-                        .elsalvador-stakes-btc-sim
-                        transfer-shares SIDE PAYOUT proposer)
-                      ERR_PAYOUT_FAILED
-                    )
-                    (print {
-                      event: "conclude",
-                      side: SIDE_LABEL,
-                      proposalId: proposalId,
-                      outcome: "passed",
-                      reason: "paid-shares",
-                      recipient: proposer,
-                      payout: PAYOUT,
-                      yesWeight: (get yesWeight p),
-                      noWeight: (get noWeight p),
-                      vault: (- vault PAYOUT),
-                    })
-                    (ok STATUS_PASSED)
-                  )
-                  (begin
-                    (map-set Proposals proposalId
-                      (merge p {
-                        status: STATUS_PASSED,
-                        reason: "credited",
-                        paidInShares: false,
-                      }))
-                    (map-set Credits proposer (+ (get-credit proposer) PAYOUT))
-                    (var-set TotalCredits (+ (var-get TotalCredits) PAYOUT))
-                    (print {
-                      event: "conclude",
-                      side: SIDE_LABEL,
-                      proposalId: proposalId,
-                      outcome: "passed",
-                      reason: "credited",
-                      recipient: proposer,
-                      payout: PAYOUT,
-                      yesWeight: (get yesWeight p),
-                      noWeight: (get noWeight p),
-                      totalCredits: (var-get TotalCredits),
-                    })
-                    (ok STATUS_PASSED)
+            (if tradeable
+              (begin
+                (map-set Proposals proposalId
+                  (merge p {
+                    status: STATUS_PASSED,
+                    reason: "paid-shares",
+                    paidInShares: true,
+                  }))
+                (unwrap!
+                  (contract-call?
+                    .elsalvador-stakes-btc-sim
+                    transfer-shares SIDE PAYOUT proposer)
+                  ERR_PAYOUT_FAILED
+                )
+                (print {
+                  event: "conclude",
+                  side: SIDE_LABEL,
+                  proposalId: proposalId,
+                  outcome: "passed",
+                  reason: "paid-shares",
+                  recipient: proposer,
+                  payout: PAYOUT,
+                  yesWeight: (get yesWeight p),
+                  noWeight: (get noWeight p),
+                  vault: (- vault PAYOUT),
+                })
+                (ok STATUS_PASSED)
+              )
+              (begin
+                (map-set Proposals proposalId
+                  (merge p {
+                    status: STATUS_PASSED,
+                    reason: "credited",
+                    paidInShares: false,
+                  }))
+                (map-set Credits proposer (+ (get-credit proposer) PAYOUT))
+                (var-set TotalCredits (+ (var-get TotalCredits) PAYOUT))
+                (print {
+                  event: "conclude",
+                  side: SIDE_LABEL,
+                  proposalId: proposalId,
+                  outcome: "passed",
+                  reason: "credited",
+                  recipient: proposer,
+                  payout: PAYOUT,
+                  yesWeight: (get yesWeight p),
+                  noWeight: (get noWeight p),
+                  totalCredits: (var-get TotalCredits),
+                })
+                (ok STATUS_PASSED)
                   )
                 )
               )
