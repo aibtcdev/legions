@@ -5,16 +5,16 @@ take on chain. Nothing else is in this project, so a mainnet apply cannot
 publish a simnet artifact by accident.
 
 ```
-elsalvador-yes-legion   <- ../contracts/yes-legion.clar   (source of record)
-elsalvador-no-legion    <- ../contracts/no-legion.clar    (generated)
+elsalvador-yes-legion-v2   <- ../contracts/yes-legion.clar   (source of record)
+elsalvador-no-legion-v2    <- ../contracts/no-legion.clar    (generated)
 ```
 
 Re-copy after any change upstream:
 
 ```bash
 node ../scripts/gen.mjs
-cp ../contracts/yes-legion.clar contracts/elsalvador-yes-legion.clar
-cp ../contracts/no-legion.clar  contracts/elsalvador-no-legion.clar
+cp ../contracts/yes-legion.clar contracts/elsalvador-yes-legion-v2.clar
+cp ../contracts/no-legion.clar  contracts/elsalvador-no-legion-v2.clar
 clarinet check
 ```
 
@@ -44,9 +44,9 @@ Two calls on the market, from any wallet holding sBTC. Nothing on the legion
 side: the market writes `positions[to]` directly.
 
 ```
-elsalvador-stakes-btc.mint-complete-set(N)
-elsalvador-stakes-btc.transfer-shares(u1, N, <deployer>.elsalvador-yes-legion)
-elsalvador-stakes-btc.transfer-shares(u0, N, <deployer>.elsalvador-no-legion)
+elsalvador-stakes-btc-v2.mint-complete-set(N)
+elsalvador-stakes-btc-v2.transfer-shares(u1, N, <deployer>.elsalvador-yes-legion-v2)
+elsalvador-stakes-btc-v2.transfer-shares(u0, N, <deployer>.elsalvador-no-legion-v2)
 ```
 
 `u1` is Bonded, `u0` is Idle. Seeding N per vault costs exactly N sats, because

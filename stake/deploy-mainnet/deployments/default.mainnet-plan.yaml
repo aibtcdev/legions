@@ -8,17 +8,17 @@ plan:
   - id: 0
     transactions:
     - transaction-type: contract-publish
-      contract-name: elsalvador-yes-legion
+      contract-name: elsalvador-yes-legion-v2
       expected-sender: SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9
       cost: 300000
-      path: contracts/elsalvador-yes-legion.clar
+      path: contracts/elsalvador-yes-legion-v2.clar
       anchor-block-only: true
       clarity-version: 6
     - transaction-type: contract-publish
-      contract-name: elsalvador-no-legion
+      contract-name: elsalvador-no-legion-v2
       expected-sender: SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9
       cost: 300000
-      path: contracts/elsalvador-no-legion.clar
+      path: contracts/elsalvador-no-legion-v2.clar
       anchor-block-only: true
       clarity-version: 6
     epoch: '4.0'

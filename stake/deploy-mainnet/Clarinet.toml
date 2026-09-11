@@ -13,14 +13,14 @@ cache_dir = './.cache'
 contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token'
 
 [[project.requirements]]
-contract_id = 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc'
+contract_id = 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2'
 
-[contracts.elsalvador-yes-legion]
-path = 'contracts/elsalvador-yes-legion.clar'
+[contracts.elsalvador-yes-legion-v2]
+path = 'contracts/elsalvador-yes-legion-v2.clar'
 clarity_version = 6
 epoch = 4.0
 
-[contracts.elsalvador-no-legion]
-path = 'contracts/elsalvador-no-legion.clar'
+[contracts.elsalvador-no-legion-v2]
+path = 'contracts/elsalvador-no-legion-v2.clar'
 clarity_version = 6
 epoch = 4.0
