@@ -12,9 +12,10 @@
 ;;
 ;; A legion that argues one side of a live prediction market.
 ;;
-;;   market:    SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc
+;;   market:    SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2
 ;;   question:  did El Salvador's reserve Bitcoin enter a Stacks protocol bond
-;;              before burn height 990,499, or did it stay idle?
+;;              in any of pox-5 bond periods 2 through 7, before burn height
+;;              994,699, or did it stay idle?
 ;;   this side: IDLE. This legion argues NO.
 ;;
 ;; The vault is this contract's own share position in that market. It is
@@ -218,18 +219,18 @@
     side: SIDE,
     label: SIDE_LABEL,
     winStatus: WIN_STATUS,
-    market: 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc,
+    market: 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2,
   }
 )
 
 (define-read-only (market-snapshot)
-  (contract-call? 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc get-market)
+  (contract-call? 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2 get-market)
 )
 
 ;; Voting weight: this side's shares in the holder's own wallet, read live.
 (define-read-only (get-weight (who principal))
   (get idle
-    (contract-call? 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc get-position who))
+    (contract-call? 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2 get-position who))
 )
 
 ;; What the pot still holds, and so how many wins are left in it.
@@ -690,7 +691,7 @@
                   }))
                 (unwrap!
                   (contract-call?
-                    'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc
+                    'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2
                     transfer-shares SIDE PAYOUT proposer)
                   ERR_PAYOUT_FAILED
                 )
@@ -764,7 +765,7 @@
     (if (and won (> vault u0))
       (let ((got (unwrap!
           (contract-call?
-            'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc redeem)
+            'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2 redeem)
           ERR_PAYOUT_FAILED)))
         (var-set RedeemedSats got)
         (print {

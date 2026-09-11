@@ -85,9 +85,9 @@ plan:
   - id: 2
     transactions:
     - transaction-type: emulated-contract-publish
-      contract-name: elsalvador-stakes-btc
+      contract-name: elsalvador-stakes-btc-v2
       emulated-sender: SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9
-      path: .cache/requirements/SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc.clar
+      path: .cache/requirements/SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: pox5-sim
@@ -95,9 +95,9 @@ plan:
       path: contracts/pox5-sim.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
-      contract-name: elsalvador-stakes-btc-sim
+      contract-name: elsalvador-stakes-btc-v2-sim
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/elsalvador-stakes-btc-sim.clar
+      path: contracts/elsalvador-stakes-btc-v2-sim.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: no-legion
@@ -108,11 +108,6 @@ plan:
       contract-name: no-legion-sim
       emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
       path: contracts/no-legion-sim.clar
-      clarity-version: 6
-    - transaction-type: emulated-contract-publish
-      contract-name: test-signer-manager
-      emulated-sender: ST1PQHQKV0RJXZFY1DGX8MNSNYVE3VGZJSRTPGZGM
-      path: contracts/test-signer-manager.clar
       clarity-version: 6
     - transaction-type: emulated-contract-publish
       contract-name: yes-legion

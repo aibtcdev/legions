@@ -16,31 +16,26 @@ contract_id = 'SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-deposit'
 contract_id = 'SN3VMHXEN64ZZF71JQ5VESXDWTR301XTTXGF4J8F1.sbtc-token'
 
 [[project.requirements]]
-contract_id = 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc'
+contract_id = 'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2'
 
 # --- the market, vendored from the stacksbet repo --------------------------
-# pox5-sim is the real pox-5 published under our address so tests hold
-# bond-admin; nothing here fakes a bond. elsalvador-stakes-btc-sim is that
+# pox5-sim is the real pox-5 published under our address; v2 derives its terms
+# from it at open. elsalvador-stakes-btc-v2-sim is that
 # repo's own simnet build of the live mainnet market: pox-5 repointed and the
-# deadline moved inside pox5-sim's bond period 1.
+# deadline moved onto simnet's anchor, one below period 2's L1 unlock.
 [contracts.pox5-sim]
 path = 'contracts/pox5-sim.clar'
 clarity_version = 6
 epoch = "4.0"
 
-[contracts.test-signer-manager]
-path = 'contracts/test-signer-manager.clar'
-clarity_version = 6
-epoch = "4.0"
-
-[contracts.elsalvador-stakes-btc-sim]
-path = 'contracts/elsalvador-stakes-btc-sim.clar'
+[contracts.elsalvador-stakes-btc-v2-sim]
+path = 'contracts/elsalvador-stakes-btc-v2-sim.clar'
 clarity_version = 6
 epoch = "4.0"
 
 # --- the legions ------------------------------------------------------------
 # The mainnet artifacts are deliberately NOT listed: they reference
-# SP5Y3W...elsalvador-stakes-btc, which simnet cannot see. The -sim builds
+# SP5Y3W...elsalvador-stakes-btc-v2, which simnet cannot see. The -sim builds
 # are generated from them by scripts/gen.mjs with the market principal
 # repointed and nothing else changed, so what the tests run is otherwise the
 # contract that deploys.

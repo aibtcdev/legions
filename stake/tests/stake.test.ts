@@ -17,7 +17,6 @@
 //   - arguing the losing side pays nothing, by construction.
 import { describe, expect, it, beforeAll } from "vitest";
 import { Cl } from "@stacks/transactions";
-import { registerSigner, setupBond } from "./helpers/pox5.js";
 
 const accounts = simnet.getAccounts();
 const deployer = accounts.get("deployer")!;
@@ -32,7 +31,7 @@ const stranger = accounts.get("wallet_6")!;
 const minnowA = accounts.get("wallet_7")!;
 const minnowB = accounts.get("wallet_8")!;
 
-const MARKET = "elsalvador-stakes-btc-sim";
+const MARKET = "elsalvador-stakes-btc-v2-sim";
 const YES = "yes-legion-sim";
 const NO = "no-legion-sim";
 const SBTC = "SM3VDXK3WZZSA84XXFKAFAF15NNZX32CTSG82JFQ4.sbtc-token";
@@ -170,10 +169,9 @@ function seedOnce() {
   if (seeded) return;
   seeded = true;
 
-  // Real pox-5 bond state, written by pox-5 itself, so the market can open.
-  registerSigner(deployer);
-  setupBond(deployer, 1, [alice, bob, carol, dave]);
-  simnet.callPublicFn(MARKET, "open", [], alice);
+  // v2's open re-derives its terms from pox-5 and asserts them; it never reads
+  // a configured bond, so no pox-5 setup is needed to open the market.
+  expect(simnet.callPublicFn(MARKET, "open", [], alice).result).toBeOk(Cl.bool(true));
   simnet.mineEmptyBurnBlocks(1);
 
   // The seeder mints complete sets and hands one side to each legion. This is

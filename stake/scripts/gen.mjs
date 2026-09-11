@@ -13,10 +13,10 @@
 // exercise is otherwise byte for byte the one that deploys to mainnet, talking
 // to the real market source and the real mainnet sBTC.
 //
-// contracts/elsalvador-stakes-btc-sim.clar is vendored from the stacksbet repo
-// and is that market's own simnet build: pox-5 swapped for pox5-sim, which is
-// the same pox-5 published under an address the tests hold admin on, and the
-// deadline moved inside pox5-sim's bond period 1.
+// contracts/elsalvador-stakes-btc-v2-sim.clar is vendored from the stacksbet
+// repo and is that market's own simnet build: pox-5 swapped for pox5-sim, which
+// is the same pox-5 published under an address the tests hold admin on, and the
+// deadline moved onto simnet's own anchor, one below period 2's L1 unlock.
 //
 // Edit yes-legion.clar, then run:  node scripts/gen.mjs
 //
@@ -31,7 +31,7 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const C = (f) => join(here, "..", "contracts", f);
 
-const MARKET = "'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc";
+const MARKET = "'SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2";
 
 // Replace every occurrence, and fail loudly if there were none.
 function subAll(src, from, to, label) {
@@ -104,7 +104,7 @@ function toNo(src) {
 // One substitution: the market is not on chain in simnet, so the reads point at
 // its vendored simnet build. Nothing else moves, sBTC included.
 function toSim(src) {
-  return subAll(src, MARKET, ".elsalvador-stakes-btc-sim", "market principal");
+  return subAll(src, MARKET, ".elsalvador-stakes-btc-v2-sim", "market principal");
 }
 
 const yes = readFileSync(C("yes-legion.clar"), "utf8");
@@ -113,7 +113,7 @@ if (yes.includes("GENERATED FILE")) {
 }
 const no = toNo(yes);
 
-const SIM_NOTE = "Simnet only: the market principal is repointed at elsalvador-stakes-btc-sim. Nothing else differs.";
+const SIM_NOTE = "Simnet only: the market principal is repointed at elsalvador-stakes-btc-v2-sim. Nothing else differs.";
 
 writeFileSync(C("no-legion.clar"),
   banner("no-legion", "yes-legion.clar", "The same rules, arguing the other side: IDLE, the coins stayed put.") + no);
