@@ -6,17 +6,33 @@ outcome they are arguing for.**
 ## Live on mainnet
 
 ```
-SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion
-SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion
+SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion-v2
+SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion-v2
 ```
 
-Published 2026-09-10 for 0.3 STX each. No wiring followed and none exists: there
-is no setter of any kind, so they were live and correct on confirmation.
+Published 2026-09-11, 0.3 STX each. Both read `elsalvador-stakes-btc-v2`. No wiring follows a
+publish and none exists: there is no setter of any kind, so they are live and
+correct on confirmation.
+
+### Superseded
+
+```
+SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion     reads elsalvador-stakes-btc (v1)
+SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion      reads elsalvador-stakes-btc (v1)
+```
+
+Published 2026-09-10, then superseded the same day when the market moved to v2.
+The market principal is a constant with no setter, which is the point, so a new
+market means new legions. They are still live on chain against v1, and each
+vault still holds 21,000 v1 shares, which only a proposal passed there can move.
+Their first proposal expired `not-concluded`: it won 2-0 and nobody called
+`conclude` inside the 12-block window.
 
 The market is
-[`SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc`](https://explorer.hiro.so/txid/SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc?chain=mainnet),
+[`SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2`](https://explorer.hiro.so/txid/SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2?chain=mainnet),
 already live on mainnet. It asks one bit: did El Salvador's reserve Bitcoin
-enter a Stacks protocol bond before burn height 990,499, or did it stay idle?
+enter a Stacks protocol bond in any of pox-5 bond periods 2 through 7, before
+burn height 994,699, or did it stay idle?
 Chips are sBTC, the subject is native L1 BTC, and settlement reads Bitcoin.
 
 `yes-legion` argues BONDED. `no-legion` argues IDLE. Nothing is shared between
@@ -70,9 +86,9 @@ time by transferring shares in; that needs no function and no permission.
 From any wallet holding sBTC:
 
 ```
-elsalvador-stakes-btc.mint-complete-set(N)              N sats in, N of each side out
-elsalvador-stakes-btc.transfer-shares(u1, N, <yes-legion>)
-elsalvador-stakes-btc.transfer-shares(u0, N, <no-legion>)
+elsalvador-stakes-btc-v2.mint-complete-set(N)              N sats in, N of each side out
+elsalvador-stakes-btc-v2.transfer-shares(u1, N, <yes-legion>)
+elsalvador-stakes-btc-v2.transfer-shares(u0, N, <no-legion>)
 ```
 
 `u1` is BONDED, `u0` is IDLE. The legions need no receive function: the market
@@ -147,7 +163,7 @@ the vote, and two more have to hold before anything moves:
 
 **There is no turnout quorum and no floor on yes weight.** Both were tried and
 removed. A turnout floor measured against circulating supply counts every
-dormant share on the side, and one wallet currently holds 505,000 of the 507,500
+dormant share on the side, and one wallet currently holds 500,000 of the 520,700
 outstanding, so any such floor stalls at whatever spread the market happens to
 have. An absolute floor on yes weight held at every roster size but priced
 participation out of a legion whose agents hold a few thousand shares each.
@@ -220,9 +236,9 @@ turns out to be wrong, so the farmer ends up long a thesis they may not hold.
 Neither is a wall. **`MIN_VOTERS` is the only dial that raises the price**, one
 wallet at a time.
 
-**Governance is only as spread as the market's holders.** As of burn 966,353 a
-single wallet holds 505,000 of the 507,500 BONDED shares and 501,000 of the
-IDLE. Until that supply spreads, that wallet clears every gate in both legions on
+**Governance is only as spread as the market's holders.** As of burn 966,508 a
+single wallet, `SP2KEWKGB0Y6EADTMQRQW2JGWQBPV355JAMZZ53QZ`, holds 500,000 of the 520,700 shares
+on each side of v2, 96%. It held the same share of v1 before moving over. Until that supply spreads, that wallet clears every gate in both legions on
 its own. Check the holder distribution before treating a vote as meaningful.
 
 **`tx-sender`, not `contract-caller`.** A contract an agent calls for some other
@@ -231,7 +247,7 @@ the worst case is a stray vote, and keying on `contract-caller` would lock out
 agents that act through their own contracts.
 
 **A deadline freeze needs someone to settle it.** If the market passes burn
-990,499 with nobody calling `resolve-idle`, credits cannot be converted.
+994,699 with nobody calling `resolve-idle`, credits cannot be converted.
 `resolve-idle` is permissionless and needs no evidence, so anyone owed a credit
 can settle it themselves.
 
@@ -242,8 +258,8 @@ can settle it themselves.
 | `contracts/yes-legion.clar` | **the source of record.** Mainnet artifact, argues BONDED |
 | `contracts/no-legion.clar` | generated: the same rules, arguing IDLE |
 | `contracts/*-sim.clar` | generated: one substituted principal, for simnet |
-| `contracts/elsalvador-stakes-btc-sim.clar` | the real market, vendored from `stacksbet` |
-| `contracts/pox5-sim.clar` | the real pox-5, under an address the tests hold admin on |
+| `contracts/elsalvador-stakes-btc-v2-sim.clar` | the real v2 market, vendored from `stacksbet` |
+| `contracts/pox5-sim.clar` | the real pox-5, under our own address; v2 derives its terms from it |
 | `scripts/gen.mjs` | yes-legion.clar -> everything else |
 | `skill.md` | the agent-facing skill: join, propose, vote, conclude |
 
@@ -256,10 +272,11 @@ substitution must land or the generator throws.
 node scripts/gen.mjs     # regenerate after editing yes-legion.clar
 clarinet check           # both mainnet artifacts are checked against the
                          # real market, pulled from chain as a requirement
-npx vitest run           # 44 tests against the real market source
+npx vitest run           # 43 tests against the real market source
 ```
 
 The `-sim` builds change exactly one thing: the market principal. Same burn
-clock, same windows, same mainnet sBTC. The mainnet market cannot be opened in
-simnet because the boot pox-5 has no bond period, which is the only reason
+clock, same windows, same mainnet sBTC. The mainnet market cannot be opened in simnet: v2's `open` asserts its deadline
+is exactly one block below period 2's L1 unlock as pox-5 computes it, and the
+boot pox-5 in simnet does not run mainnet's schedule. That is the only reason
 `pox5-sim` is in the picture.

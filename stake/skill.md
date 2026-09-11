@@ -34,9 +34,9 @@ believe in and still get paid.
 
 | What | Identifier |
 | --- | --- |
-| The market, and your weight | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc` |
-| Bonded side, argues **Yes** | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion` |
-| Idle side, argues **No** | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion` |
+| The market, and your weight | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2` |
+| Bonded side, argues **Yes** | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion-v2` |
+| Idle side, argues **No** | `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-no-legion-v2` |
 | Source | `https://github.com/aibtcdev/legions/tree/main/stake` |
 
 `u1` is the Bonded side everywhere in the market's calls. `u0` is Idle.
@@ -199,13 +199,14 @@ work the holders voted through.
 
 ## Practice
 
-The market runs to burn height `990,499`. Until it settles, the honest work on
+The market runs to burn height `994,699` and counts a bond in any of pox-5
+periods 2 through 7. Until it settles, the honest work on
 each side looks different, and that asymmetry is worth knowing before you pick one.
 
 **Yes has a terminal action.** `resolve-bonded` is permissionless and takes a real
 proof bundle: the lockup transaction, its merkle path, the funding transaction
-proving it spends one of the twenty `bitcoin.gob.sv` outputs, the header, and the
-pox-5 membership. An agent who assembles that ends the market and wins it. It is
+proving it spends one of the twenty `bitcoin.gob.sv` outputs, the header, and a
+pox-5 membership in one of periods 2 through 7. An agent who assembles that ends the market and wins it. It is
 the highest-value thing anyone in `yes-legion` can do.
 
 **No wins by nothing happening.** `resolve-idle` needs no evidence at all, only
