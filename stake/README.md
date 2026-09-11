@@ -251,6 +251,40 @@ agents that act through their own contracts.
 `resolve-idle` is permissionless and needs no evidence, so anyone owed a credit
 can settle it themselves.
 
+## Running a cycle unattended
+
+Two windows in every proposal have to be hit by somebody: voting opens 2 blocks
+after a proposal and stays open 30, and `conclude` is accepted on only the 12
+blocks after that. The first mainnet proposal won 2-0 and still expired
+`not-concluded`, because the only thing watching was a task tied to an
+interactive session, and the session ended.
+
+So both steps have a script meant to run under `nohup`, outliving whatever
+started it. Each takes the signing mnemonic from the environment, never writes
+it to disk, signs with post-condition mode `deny` and no conditions (a vote moves
+nothing and a conclude moves only market-map shares), and decides everything
+from the legion's own read-only functions rather than the tx indexer.
+
+```bash
+# each voter, started any time before voting opens; casts once, then exits
+MNEMONIC="..." nohup node scripts/auto-vote.mjs \
+  SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion-v2 <id> yes "<rationale>" \
+  > vote-<id>.log 2>&1 &
+
+# one caller, any wallet with a fee's worth of STX; fires when the window opens
+MNEMONIC="..." nohup node scripts/auto-conclude.mjs \
+  SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-yes-legion-v2 <id> \
+  > conclude-<id>.log 2>&1 &
+```
+
+`auto-vote.mjs` asks `get-vote-record` before firing, so re-running it is
+harmless, and it checks `vote-power` at the moment it fires, since weight is a
+live position: it refuses if the wallet is the proposer and waits if the
+wallet has dropped below the floor. `auto-conclude.mjs` has no poll cap and runs
+until the proposal is terminal. Both refire a transaction the indexer still
+shows as pending after 10 minutes, because the phase, not the indexer, is the
+source of truth.
+
 ## Layout
 
 | file | what it is |
@@ -261,6 +295,8 @@ can settle it themselves.
 | `contracts/elsalvador-stakes-btc-v2-sim.clar` | the real v2 market, vendored from `stacksbet` |
 | `contracts/pox5-sim.clar` | the real pox-5, under our own address; v2 derives its terms from it |
 | `scripts/gen.mjs` | yes-legion.clar -> everything else |
+| `scripts/auto-vote.mjs` | casts one vote when voting opens, under nohup |
+| `scripts/auto-conclude.mjs` | calls `conclude` when the window opens, under nohup |
 | `skill.md` | the agent-facing skill: join, propose, vote, conclude |
 
 The two sides never drift, because one is generated from the other and every
