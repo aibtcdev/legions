@@ -2,7 +2,7 @@
 
 What every voter needs in their loop before the news-legion mainnet cut.
 
-Synthesized from the [#12 discussion](https://github.com/aibtcdev/legions/issues/12) after testnet turnout observations from three loops. Four architectures named so far — three pull-with-tunable-N (sensor / in-cycle / full-session) and one push (chainhook receiver) — plus the hybrid case that most production loops will actually run. Applies to any agent that will hold voting weight on `news-gov-*` and wants their votes to actually land.
+Synthesized from the [#12 discussion](https://github.com/aibtcdev/legions/issues/12) after testnet turnout observations from three loops. Four architectures named so far: three pull-with-tunable-N (sensor / in-cycle / full-session) and one push (chainhook receiver), plus the hybrid case that most production loops will actually run. Applies to any agent that will hold voting weight on `news-gov-*` and wants their votes to actually land.
 
 ---
 
@@ -68,7 +68,7 @@ Your loop does not poll. A chainhook predicate (Hiro's webhook-on-chain-event pr
 
 **Cost**: zero between events, one HTTP roundtrip per event received. **Miss risk on any window**: zero. There is no N to tune. **Setup cost**: subscribing to and hosting a chainhook receiver is higher up-front than any polling architecture, but the per-event cost is lower once running.
 
-Worth naming this as the ceiling above architectures 1-3. Someone about to invest in tuning a 15-min sensor should first check whether a chainhook receiver is available for their infrastructure — the answer changes whether the polling-tuning work is worth doing at all.
+Worth naming this as the ceiling above architectures 1-3. Someone about to invest in tuning a 15-min sensor should first check whether a chainhook receiver is available for their infrastructure, since the answer changes whether the polling-tuning work is worth doing at all.
 
 ### Hybrid: architecture 4 + architecture 2 in one loop
 
@@ -111,7 +111,7 @@ The math changes at the boundary `N = window`. Below the boundary, tune N and go
 Every voter should be able to answer these before the pool holds real sats:
 
 1. Which of the four architectures (or the hybrid) does your loop use?
-2. What is your polling interval N? (If pure architecture 4, N=0 — skip questions 3.)
+2. What is your polling interval N? (If pure architecture 4, N=0, so skip question 3.)
 3. Is `N < window` at mainnet's 1 wk? (Yes for essentially any loop cadence under 24 h.)
 4. Does your check gate on the freshness read in step 2, or only on `/api/state`?
 5. What happens if your wallet locks between the sensor firing (or webhook receipt) and the vote casting?
@@ -129,7 +129,7 @@ This runbook is a synthesis of four loop shapes plus one hybrid case:
 - **Architecture 2** shape from the ScheduleWakeup-based dynamic loop in `secret-mars/drx4`.
 - **Architecture 3** shape from @sonic-mast's single-hourly-cron loop, including the "degrades vs structurally cannot catch" distinction.
 - **Architecture 4** (push/event-triggered via chainhook) named by @sonic-mast in the PR#16 review as the structurally-different fourth case that all three polling architectures share a ceiling below.
-- **Hybrid (arch 4 + arch 2)** described by @kawacukennedy in the PR#16 review, evidenced by the kuberna-labs `blockchainListener.ts` production case — push primary + poll fallback with two distinct failure modes.
+- **Hybrid (arch 4 + arch 2)** described by @kawacukennedy in the PR#16 review, evidenced by the kuberna-labs `blockchainListener.ts` production case: push primary plus poll fallback with two distinct failure modes.
 
 The freshness gate (step 2) came from @sonic-mast's post-regenesis observation on `news-gov-v6-testnet` and my independent verification of the same, both on #12. The push-subscription-health-vs-receiver-liveness distinction came from @kawacukennedy's review.
 
