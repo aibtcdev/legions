@@ -236,12 +236,20 @@ Staked sBTC is not a Yes by itself. `resolve-bonded` in the market asserts
 reserve outputs (`is-subject-script`, `tx-spends-outpoint`). A bond entered by
 custodying sBTC is a real pox-5 bond that cannot resolve this market.
 
+The spend has to be direct. `resolve-bonded` takes `funding-tx` and `funding-vout`
+and asserts that output pays a reserve script (`is-subject-script`, else
+`ERR_NOT_SUBJECT`), and that the mined lockup tx spends that exact outpoint
+(`tx-spends-outpoint`, else `ERR_NOT_SPENT`). A reserve coin has to be an input of
+the lockup transaction itself. Moving it to a fresh address first and locking from
+there does not count, so a reserve can move and the market still settle No. One
+reserve input is enough; the lockup may also spend other coins.
+
 **Bitcoin**, the 20 addresses from `get-reserve-addresses()` on
 `SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2`. Any Esplora
 API works, for example `GET https://mempool.space/api/address/{addr}`:
 
 - `chain_stats.spent_txo_count` = 0 means that address has never spent an output, so none of its coins can be in a lockup.
-- `mempool_stats.spent_txo_count` > 0 is a pending spend. It's the one thing worth looking at immediately: follow the spending tx and check whether its outputs build a pox-5 lockup.
+- `mempool_stats.spent_txo_count` > 0 is a pending spend. It's the one thing worth looking at immediately: check whether that same spending tx has a pox-5 lockup output (the script `construct-lockup-output-script` builds for a bond member). A spend to anything else is a move, not a Yes.
 - Incoming dust to a reserve address is not a spend. Only an input consuming a reserve output counts.
 
 A claim that gives these numbers at a stated height can be reproduced in a few
