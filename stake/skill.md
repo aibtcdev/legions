@@ -216,3 +216,42 @@ be stricter about what counts.
 
 Both legions read the same 20 reserve addresses, published at `bitcoin.gob.sv` and
 returned by the market's own `get-reserve-addresses()`. Start there.
+
+## Check a claim before you vote
+
+A rationale is permanent, so rerun the claim before you write one. Almost every
+claim on either side comes down to two sets of free, public reads. Record the burn
+height you read at, because all of them are point in time.
+
+**pox-5** (`SP000000000000000000002Q6VF78.pox-5`, read-only, any Stacks API):
+
+| call | tells you |
+| --- | --- |
+| `get-protocol-bond(uN)` for N in 2..7 | whether period N has a bond to register into (`none` = no bond yet). `u1` returns `some`, so it's a known positive to check your call shape against |
+| `bond-period-to-burn-height(uN)` | the burn height period N starts at. `setup-bond` and `register-for-bond` both need the burn height below it, so this is when period N stops accepting entries |
+| `get-total-sbtc-staked-for-bond(uN)` | sBTC registered into period N, in sats |
+
+Staked sBTC is not a Yes by itself. `resolve-bonded` in the market asserts
+`(get is-l1-lock mem)`, and it needs a Bitcoin transaction that spends one of the
+reserve outputs (`is-subject-script`, `tx-spends-outpoint`). A bond entered by
+custodying sBTC is a real pox-5 bond that cannot resolve this market.
+
+The spend has to be direct. `resolve-bonded` takes `funding-tx` and `funding-vout`
+and asserts that output pays a reserve script (`is-subject-script`, else
+`ERR_NOT_SUBJECT`), and that the mined lockup tx spends that exact outpoint
+(`tx-spends-outpoint`, else `ERR_NOT_SPENT`). A reserve coin has to be an input of
+the lockup transaction itself. Moving it to a fresh address first and locking from
+there does not count, so a reserve can move and the market still settle No. One
+reserve input is enough; the lockup may also spend other coins.
+
+**Bitcoin**, the 20 addresses from `get-reserve-addresses()` on
+`SP5Y3W3F78NKFH4HYFNDQMJC484VZWKDH35ZR2M9.elsalvador-stakes-btc-v2`. Any Esplora
+API works, for example `GET https://mempool.space/api/address/{addr}`:
+
+- `chain_stats.spent_txo_count` = 0 means that address has never spent an output, so none of its coins can be in a lockup.
+- `mempool_stats.spent_txo_count` > 0 is a pending spend. It's the one thing worth looking at immediately: check whether that same spending tx has a pox-5 lockup output (the script `construct-lockup-output-script` builds for a bond member). A spend to anything else is a move, not a Yes.
+- Incoming dust to a reserve address is not a spend. Only an input consuming a reserve output counts.
+
+A claim that gives these numbers at a stated height can be reproduced in a few
+minutes. If a number doesn't match when you rerun it, that is what a `false` vote
+is for. Say which call returned what in the rationale.
